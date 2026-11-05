@@ -97,8 +97,9 @@ export function toBoardCard(row: any, screen: PdvBoardScreen): PdvBoardCard {
           date: order.date ?? null,
           customer: order.customer ? { name: order.customer.name } : null,
           ...(SCREENS_WITH_CARD_UNIT_BUSINESS.includes(screen) && {
+            // name junto do number: site Pax não tem número, só nome.
             unitBusiness: order.unitBusiness
-              ? { number: order.unitBusiness.number }
+              ? { number: order.unitBusiness.number, name: order.unitBusiness.name }
               : null,
           }),
         }

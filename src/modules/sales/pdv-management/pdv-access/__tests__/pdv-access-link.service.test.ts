@@ -15,6 +15,8 @@ jest.mock("../../../../../shared/utils/base-models/base-redis", () => ({
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import redisService from "../../../../../shared/utils/base-models/base-redis";
 import { PdvAccessLinkService } from "../pdv-access-link.service";
+import { computeStoreScreenToken } from "../helpers/pdv-access-token.helper";
+import { PdvAccessScreen } from "../pdv-access.types";
 
 const cd21 = { id: "cd21-id", number: "21", name: "CD21" };
 const storeA = { id: "store-a", number: "15", name: "Loja A" };
@@ -117,5 +119,22 @@ describe("PdvAccessLinkService", () => {
 
     expect(result.stores).toHaveLength(1);
     expect(result.stores?.[0].unitBusinessNumber).toBe("15");
+  });
+
+  it("site Pax (sem número): link de loja usa o nome no token e no `number` da URL", async () => {
+    const websitePax = { id: "ub-site", number: null, name: "Site Novo - www.paxpneus.com.br" };
+    (
+      unitBusinessService.getComercialUnitBusinessOnly as jest.Mock
+    ).mockResolvedValue([storeA, websitePax]);
+
+    const result = await service.getAccessLinks();
+    const siteLink = result.stores?.find((link) => link.unitBusinessId === "ub-site");
+    const url = new URL(siteLink!.storeRequestUrl);
+
+    expect(siteLink?.unitBusinessNumber).toBeNull();
+    expect(url.searchParams.get("number")).toBe(websitePax.name);
+    expect(url.searchParams.get("token")).toBe(
+      computeStoreScreenToken(websitePax.name, PdvAccessScreen.STORE_REQUEST),
+    );
   });
 });

@@ -104,6 +104,7 @@ jest.mock("../../../../company/unit-business/unit-business.service", () => ({
     findOne: jest.fn(),
     getCd21UnitBusiness: jest.fn(),
     getPhysicalNumberedUnitBusinessIds: jest.fn(),
+    getWebsitePaxUnitBusinessId: jest.fn(),
     // Lojas próprias das notas de transferência dos testes (CD MG, CD SP, Loja 12).
     findAll: jest
       .fn()
@@ -190,6 +191,7 @@ import paymentMethodService from "../../../orders/payment_method/payment_method.
 import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
+import { WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM } from "../../../../company/unit-business/helpers/website-pax-unit-business";
 import roleService from "../../../../company/users/roles/role.service";
 import tempFileService from "../../../../handlers/temp-file/temp-file.service";
 import { extractAccessKeyFromXmlContent } from "../../../../../shared/utils/xml/access-key";
@@ -250,6 +252,8 @@ describe("PdvSalesRequestService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     service = new PdvSalesRequestService();
+    // Default: loja do site Pax não cadastrada — só os testes do site sobrescrevem.
+    (unitBusinessService.getWebsitePaxUnitBusinessId as jest.Mock).mockResolvedValue(null);
     // Default: análise "vazia" e sem duplicidade — testes que não se
     // importam com a extração de comprovante não precisam mockar isso.
     (paymentReceiptExtractionService.analyze as jest.Mock).mockResolvedValue({
@@ -494,6 +498,50 @@ describe("PdvSalesRequestService", () => {
         }),
         { transaction: mockTransaction },
       );
+    });
+
+    describe("site Pax (loja online)", () => {
+      beforeEach(() => {
+        (orderService.findById as jest.Mock).mockResolvedValue({
+          id: "order-site",
+          invoice_id: null,
+          unit_business_id: "ub-site",
+        });
+        (unitBusinessService.findById as jest.Mock).mockResolvedValue({
+          id: "ub-site",
+          id_system: WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM,
+          type: "ONLINE",
+          number: null,
+        });
+        (unitBusinessService.getWebsitePaxUnitBusinessId as jest.Mock).mockResolvedValue("ub-site");
+        (pdvSalesRequestRepository.findByOrderId as jest.Mock).mockResolvedValue(null);
+        (pdvSalesRequestRepository.findActiveByOrderId as jest.Mock).mockResolvedValue(null);
+        (pdvSalesRequestRepository.create as jest.Mock).mockResolvedValue({
+          id: "request-site",
+          status: PdvSalesRequestStatus.OPEN,
+        });
+      });
+
+      it("com vendedor válido (elegível): cria a solicitação vazia, exigindo vendedor da loja do site", async () => {
+        (orderService.isEligibleForPdv as jest.Mock).mockResolvedValue(true);
+
+        await service.createEmptyRequestForNewOrderIfEligible("order-site");
+
+        expect(orderService.isEligibleForPdv).toHaveBeenCalledWith("order-site", "ub-site");
+        expect(pdvSalesRequestRepository.create).toHaveBeenCalledWith(
+          expect.objectContaining({ order_id: "order-site", unit_business_id: "ub-site" }),
+          { transaction: mockTransaction },
+        );
+      });
+
+      it("sem vendedor válido (Vendedor 0/null → não elegível): não cria", async () => {
+        (orderService.isEligibleForPdv as jest.Mock).mockResolvedValue(false);
+
+        const result = await service.createEmptyRequestForNewOrderIfEligible("order-site");
+
+        expect(result).toBeNull();
+        expect(pdvSalesRequestRepository.create).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -4509,6 +4557,18 @@ describe("PdvSalesRequestService", () => {
 
       const open = result.columns.find((c: any) => c.key === "open");
       expect(open).toEqual(expect.objectContaining({ extra: true, highlighted: false }));
+    });
+
+    it("acesso global: escopo inclui a loja do site Pax junto das físicas", async () => {
+      (unitBusinessService.getWebsitePaxUnitBusinessId as jest.Mock).mockResolvedValue("ub-site");
+
+      await service.getBoard(cd21Access, {}, parseBoardQuery({}));
+
+      const [countWhere] = (pdvSalesRequestRepository.countGroupedByStatus as jest.Mock)
+        .mock.calls[0];
+      expect(flattenAnd(countWhere)).toContainEqual({
+        unit_business_id: { [Op.in]: ["ub-1", "ub-2", "ub-site"] },
+      });
     });
 
     it("televendas: escopo em todas as lojas físicas, colunas da loja", async () => {

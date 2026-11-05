@@ -7,6 +7,14 @@ aqui.
 
 **Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
 
+## Novo: loja do site Pax (online) no PDV
+
+- Pedidos do site Pax entram no PDV (sale request automática), **só com vendedor válido** (preenchido e diferente de "Vendedor 0"). Aparecem nos quadros globais (Televendas sem loja, Financeiro, CD21).
+- Site Pax é tratado como **loja** (`STORE_REQUEST`, só pedidos do site): por login ou pelo link de loja.
+- `GET /api/pdv-access/links` traz o site em `stores` com `unitBusinessNumber: null`. O `storeRequestUrl` dele leva o **nome** da loja em `number` (`&number=Site%20Novo%20-%20www.paxpneus.com.br`) — repassar esse valor em `x-pdv-unit-business-number`/`unitBusinessNumber` do socket como já é feito com o número.
+- Site **não tem número**: `order.unitBusiness.number` vem `null` → exibir `order.unitBusiness.name`. Card agora traz `order.unitBusiness { number, name }`.
+- `GET /api/unit-business/comercial/allowed` passa a incluir o site (`number: null`, no fim da lista).
+
 ## Mudou: vincular NF de transferência já avança (sem confirm manual)
 
 - `POST /:id/transfer-invoice` em `PENDING_NF_TRANSFER` já devolve a solicitação em `SHIPPING` (ou `CRITICAL_ERROR` com aviso crítico) quando a nota já existe no sistema — **remover a chamada a `POST /:id/transfer-invoice/confirm`** depois do anexo (chamá-la agora responde `400`, a solicitação não está mais em `PENDING_NF_TRANSFER`).

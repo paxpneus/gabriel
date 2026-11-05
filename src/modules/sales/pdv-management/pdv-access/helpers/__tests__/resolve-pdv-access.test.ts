@@ -12,8 +12,11 @@ jest.mock("../../../../../company/users/users/user.service", () => ({
 }));
 
 import userService from "../../../../../company/users/users/user.service";
-import { assertLinkParamsMatch, resolveLoginAccess } from "../resolve-pdv-access";
+import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
+import { assertLinkParamsMatch, resolveLinkAccess, resolveLoginAccess } from "../resolve-pdv-access";
+import { computeStoreScreenToken } from "../pdv-access-token.helper";
 import { PdvAccessContext, PdvAccessScreen } from "../../pdv-access.types";
+import { WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM } from "../../../../../company/unit-business/helpers/website-pax-unit-business";
 
 // Regra determinística (ver resolve-pdv-access.ts): NUNCA via
 // ROLE_PERMISSIONS/userHasPermission — só user.type + unit_business.
@@ -159,6 +162,26 @@ describe("resolveLoginAccess", () => {
     });
   });
 
+  it("usuário do site Pax (loja online, sem número) — resolve STORE_REQUEST escopado no site", async () => {
+    (userService.getMe as jest.Mock).mockResolvedValue(
+      makeUser({
+        unit_business_id: "ub-site",
+        unitBusiness: { id: "ub-site", number: null, id_system: WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM },
+      }),
+    );
+
+    const result = await resolveLoginAccess("token", ALL_SCREENS);
+
+    expect(result).toEqual({
+      context: {
+        screen: PdvAccessScreen.STORE_REQUEST,
+        via: "LOGIN",
+        unitBusinessId: "ub-site",
+        userId: "user-1",
+      },
+    });
+  });
+
   it("usuário sem unit business e sem config.type finance — sem tela nenhuma, retorna null", async () => {
     (userService.getMe as jest.Mock).mockResolvedValue(
       makeUser({ unit_business_id: null, unitBusiness: null }),
@@ -266,4 +289,40 @@ describe("assertLinkParamsMatch", () => {
       );
     },
   );
+});
+
+describe("resolveLinkAccess — site Pax (identificado pelo nome)", () => {
+  const websitePax = {
+    id: "ub-site",
+    number: null,
+    name: "Site Novo - www.paxpneus.com.br",
+    id_system: WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM,
+  };
+
+  beforeAll(() => {
+    process.env.PDV_ACCESS_TOKEN_SECRET = "test-secret";
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (unitBusinessService.findOne as jest.Mock).mockResolvedValue(websitePax);
+  });
+
+  it("token de loja gerado com o nome — STORE_REQUEST escopado no site", async () => {
+    const token = computeStoreScreenToken(websitePax.name, PdvAccessScreen.STORE_REQUEST);
+
+    const result = await resolveLinkAccess(websitePax.name, token, ALL_SCREENS);
+
+    expect(result).toEqual({
+      context: { screen: PdvAccessScreen.STORE_REQUEST, via: "STORE_LINK", unitBusinessId: "ub-site" },
+    });
+  });
+
+  it("token de CD21 com o nome do site — nunca vira CD21 (401)", async () => {
+    const token = computeStoreScreenToken(websitePax.name, PdvAccessScreen.CD21);
+
+    const result = await resolveLinkAccess(websitePax.name, token, ALL_SCREENS);
+
+    expect(result).toEqual({ error: expect.objectContaining({ status: 401 }) });
+  });
 });

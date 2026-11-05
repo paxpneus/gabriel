@@ -51,7 +51,7 @@ import {
 } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 import { BatchInvoiceItemsAttributes } from "../../../expedition/batch-invoice-items/batch-invoice-items.types";
 import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
-import { pendingCancellationWhere } from "./helpers/custom-filters";
+import { invoiceCancelledSql, pendingCancellationWhere } from "./helpers/custom-filters";
 import { xmlHeadLiteral } from "./helpers/nfe-ide";
 import { deliveryNoteGeneratedLiteral } from "./helpers/delivery-note";
 import { LOGISTIC_OCCURRENCE_CODES } from "../../../../handlers/logistic/constants/constants";
@@ -1427,7 +1427,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   }
 
   // Notas cuja transfer_invoice_reference aponta pra um desses números — mesma extração de extractTransferReferenceNumber
-  // (1º grupo de dígitos, sem zeros à esquerda).
+  // (1º grupo de dígitos, sem zeros à esquerda). Nota de venda cancelada não segura a transferência: fica de fora.
   async findByTransferReferenceNumbers(
     numbers: string[],
   ): Promise<Array<{ id: string; number_system: string; transfer_number: string }>> {
@@ -1435,7 +1435,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     const transferNumber = fn("LTRIM", fn("SUBSTRING", col("transfer_invoice_reference"), "\\d+"), "0");
     const rows = await this.model.findAll({
       attributes: ["id", "number_system", [transferNumber, "transfer_number"]],
-      where: Sequelize.where(transferNumber, { [Op.in]: numbers }),
+      where: {
+        [Op.and]: [
+          Sequelize.where(transferNumber, { [Op.in]: numbers }),
+          Sequelize.literal(`NOT ${invoiceCancelledSql('"Invoice"."id"')}`),
+        ],
+      },
       raw: true,
     });
     return rows as unknown as Array<{ id: string; number_system: string; transfer_number: string }>;

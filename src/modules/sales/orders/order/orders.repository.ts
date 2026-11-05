@@ -25,7 +25,7 @@ import {
 import { collectionDateBucketLiteral, tomorrowBucketKey } from "./helpers/aggregates";
 import { translateOrderInternalStatus } from "./helpers/translations";
 import {
-  orderMissingGeneratedDeliveryNoteLiteral,
+  pdvEligibilityLiterals,
   BLING_CANCELLED_SITUACAO_ID,
 } from "./helpers/eligible-for-pdv-filters";
 import Store from "../../stores/stores.model";
@@ -169,8 +169,10 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
   // `unitBusinessId` aceita uma loja só (fluxo normal) ou uma lista (acesso
   // global sem loja selecionada, ex.: Televendas — ver
   // pdv-sales-request.service.ts::findEligibleOrders).
+  // `sellerRequiredUnitBusinessId`: loja cujo pedido só entra com vendedor válido (site Pax); null = sem exigência.
   async findEligibleForPdvByUnitBusiness(
     unitBusinessId: string | string[],
+    sellerRequiredUnitBusinessId: string | null,
     limit?: number | null,
   ): Promise<Order[]> {
     return this.model.findAll({
@@ -179,7 +181,7 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
           ? { [Op.in]: unitBusinessId }
           : unitBusinessId,
         actual_situation: { [Op.ne]: BLING_CANCELLED_SITUACAO_ID },
-        [Op.and]: [orderMissingGeneratedDeliveryNoteLiteral()],
+        [Op.and]: pdvEligibilityLiterals(sellerRequiredUnitBusinessId),
       },
       attributes: { exclude: ["source_payload"] },
       include: [
@@ -196,12 +198,15 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
   // pedido), só que pra UM pedido específico — usado por
   // bling-order.service.ts::createOrderFromBling pra decidir se a
   // PdvSalesRequest vazia nasce junto do pedido.
-  async isEligibleForPdv(orderId: string): Promise<boolean> {
+  async isEligibleForPdv(
+    orderId: string,
+    sellerRequiredUnitBusinessId: string | null,
+  ): Promise<boolean> {
     const order = await this.model.findOne({
       where: {
         id: orderId,
         actual_situation: { [Op.ne]: BLING_CANCELLED_SITUACAO_ID },
-        [Op.and]: [orderMissingGeneratedDeliveryNoteLiteral()],
+        [Op.and]: pdvEligibilityLiterals(sellerRequiredUnitBusinessId),
       },
       attributes: ["id"],
     });

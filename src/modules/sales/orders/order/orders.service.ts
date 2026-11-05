@@ -453,10 +453,12 @@ export class OrderService extends BaseService<Order, OrderRepository> {
 
   async findEligibleForPdvByUnitBusiness(
     unitBusinessId: string | string[],
+    sellerRequiredUnitBusinessId: string | null,
     limit?: number | null,
   ): Promise<Order[]> {
     return this.repository.findEligibleForPdvByUnitBusiness(
       unitBusinessId,
+      sellerRequiredUnitBusinessId,
       limit,
     );
   }
@@ -465,8 +467,12 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     return this.repository.findByIdWithFullDetail(orderId);
   }
 
-  async isEligibleForPdv(orderId: string): Promise<boolean> {
-    return this.repository.isEligibleForPdv(orderId);
+  // `sellerRequiredUnitBusinessId`: loja cujo pedido só é elegível com vendedor válido (site Pax).
+  async isEligibleForPdv(
+    orderId: string,
+    sellerRequiredUnitBusinessId: string | null,
+  ): Promise<boolean> {
+    return this.repository.isEligibleForPdv(orderId, sellerRequiredUnitBusinessId);
   }
 }
 

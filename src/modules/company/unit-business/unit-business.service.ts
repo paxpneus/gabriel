@@ -17,7 +17,10 @@ import User from "../users/users/user.model";
 import { UserAttributes } from "../users/users/user.types";
 import Role from "../users/roles/role.model";
 import expeditionBatchService from "../../warehouse/expedition/batch/batch.service";
-import { comercialUnitBusinessWhere } from "./helpers/comercial-unit-business";
+import {
+  comercialUnitBusinessWhere,
+  comercialWithWebsitePaxWhere,
+} from "./helpers/comercial-unit-business";
 import { onlineFirstThenNumberOrder } from "./helpers/list-order";
 import { isWithinPhysicalStoreRange } from "./helpers/physical-numbered-unit-business";
 import { CD21_UNIT_BUSINESS_NUMBER } from "./helpers/cd21-unit-business-number";
@@ -240,10 +243,11 @@ export class UnitBusinessService extends BaseService<
       .map((store) => store.id);
   }
 
+  // Inclui o site Pax (sem número, vai pro fim) — usado pelos links de loja do PDV.
   async getComercialUnitBusinessOnly(): Promise<UnitBusinessAttributes[]> {
     const result = await this.findAll({
-      where: comercialUnitBusinessWhere(),
-      order: [["number", "DESC"]],
+      where: comercialWithWebsitePaxWhere(),
+      order: [["number", "DESC NULLS LAST"]],
     });
 
     if (!result)
@@ -274,11 +278,14 @@ export class UnitBusinessService extends BaseService<
   ): Promise<UnitBusinessAttributes[]> {
     const allowedIds = await this.resolveSwitchableUnitBusinessIds(userId);
 
+    // Lojas físicas comerciais + site Pax (online, sem número — também opera no PDV).
+    const where: Record<string | symbol, unknown> = { ...comercialWithWebsitePaxWhere() };
+    if (allowedIds) where.id = allowedIds;
+
     const result = await this.findAll({
-      where: allowedIds
-        ? { ...comercialUnitBusinessWhere(), id: allowedIds }
-        : comercialUnitBusinessWhere(),
-      order: [["number", "DESC"]],
+      where,
+      // Site sem número vai pro fim da lista.
+      order: [["number", "DESC NULLS LAST"]],
       attributes: ["id", "name", "number"],
     });
 

@@ -22,8 +22,6 @@ import { pdvAccess } from "../../../../sales/pdv-management/pdv-access/pdv-acces
 import { PdvAccessScreen } from "../../../../sales/pdv-management/pdv-access/pdv-access.types";
 import userService from "../../../../company/users/users/user.service";
 import roleService from "../../../../company/users/roles/role.service";
-import unitBusinessService from "../../../../company/unit-business/unit-business.service";
-import { PDV_EXCLUDED_STORE_NUMBERS } from "../../../../sales/pdv-management/helpers/pdv-excluded-unit-business";
 
 const router = Router();
 
@@ -181,7 +179,7 @@ router.get(
  *
  * Body:
  * {
- *   "onlyMineUnitBusiness": true | false,        // opcional (default false) — true escopa pro unit_business_id do próprio usuário logado; false/omitido escopa pra todas as lojas físicas normais (mesmo universo do link de Televendas — CD21 inclusa, nunca online/marketplace/loja fora do fluxo PDV)
+ *   "onlyMineUnitBusiness": true | false,        // opcional (default false) — true escopa pro unit_business_id do próprio usuário logado; false/omitido escopa pra todas as lojas físicas normais (mesmo universo do link de Televendas — CD21 inclusa + site Pax, nunca marketplace/loja fora do fluxo PDV)
  *   "orderStatus": "CANCELADO" | [...],          // opcional — normalized_status (mesmo vocabulário de filters[status] do GET /order)
  *   "hasPdvSalesRequest": true | false,          // opcional — tri-state: omitido = não filtra
  *   "pdvStatus": "OPEN" | [...]                  // opcional — status da PdvSalesRequest (implica hasPdvSalesRequest=true)
@@ -211,14 +209,11 @@ router.post(
         }
         orderFilters.unit_business_id = loggedUser.unit_business_id;
       } else {
-        // Mesmo universo de lojas que o link de Televendas enxerga (ver
-        // resolveUnitBusinessScope em pdv-sales-request.service.ts) — nunca
-        // "todo pedido do banco": exclui online/marketplace (sem
-        // unit_business_id) e loja fora do fluxo PDV por decisão de produto.
+        // Mesmo universo de lojas que o link de Televendas enxerga
+        // (pdvSalesRequestService.getPdvUnitBusinessIds) — nunca "todo pedido
+        // do banco": exclui marketplace e loja fora do fluxo PDV; site Pax entra.
         orderFilters.unit_business_id =
-          await unitBusinessService.getPhysicalNumberedUnitBusinessIds(
-            PDV_EXCLUDED_STORE_NUMBERS,
-          );
+          await pdvSalesRequestService.getPdvUnitBusinessIds();
       }
       if (orderStatus) orderFilters.status = orderStatus;
 

@@ -1,4 +1,6 @@
 import { Sequelize } from "sequelize";
+import sequelize from "../../../../../config/sequelize";
+import { UNASSIGNED_SELLER_NAME } from "../../../contacts/contacts.types";
 
 // Código Bling (actual_situation) de pedido cancelado. Elegibilidade pro
 // PDV olha só esse código — qualquer outra situação (ex.: "21" em
@@ -35,4 +37,29 @@ export function orderMissingGeneratedDeliveryNoteLiteral() {
       AND iuba.batch_generated = true
       AND eb.delivery_note_generated_at IS NOT NULL
   )`);
+}
+
+// Pedido da loja que exige vendedor (site Pax, loja online) só entra com vendedor válido — mesmo critério do
+// relatório de vendedor (seller_id preenchido e ≠ "Vendedor 0"); pedido de outra loja não é afetado.
+export function orderHasValidSellerWhenRequiredLiteral(
+  sellerRequiredUnitBusinessId: string,
+) {
+  return Sequelize.literal(`(
+    "Order"."unit_business_id" IS DISTINCT FROM ${sequelize.escape(sellerRequiredUnitBusinessId)}
+    OR EXISTS (
+      SELECT 1 FROM contacts seller
+      WHERE seller.id = "Order"."seller_id"
+        AND seller.name <> ${sequelize.escape(UNASSIGNED_SELLER_NAME)}
+    )
+  )`);
+}
+
+// Literais de elegibilidade PDV além da situação (sem romaneio gerado + vendedor válido quando a loja exige) —
+// fonte única de orders.repository.ts::findEligibleForPdvByUnitBusiness/isEligibleForPdv.
+export function pdvEligibilityLiterals(sellerRequiredUnitBusinessId: string | null) {
+  const literals = [orderMissingGeneratedDeliveryNoteLiteral()];
+  if (sellerRequiredUnitBusinessId) {
+    literals.push(orderHasValidSellerWhenRequiredLiteral(sellerRequiredUnitBusinessId));
+  }
+  return literals;
 }

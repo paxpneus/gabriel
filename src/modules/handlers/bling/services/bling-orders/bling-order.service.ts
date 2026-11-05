@@ -1131,6 +1131,12 @@ export class BlingOrderService {
         })),
       );
 
+      // 2ª checagem depois do seller_id gravado: pedido do site Pax só fica elegível com vendedor válido,
+      // e o bloco defensivo acima roda antes do vendedor ser atualizado (no-op se já criou lá).
+      await pdvSalesRequestService.createEmptyRequestForNewOrderIfEligible(
+        existingOrder.id,
+      );
+
       // Fallback: o sync da nota no bloco defensivo acima não completou.
       if (invoiceId && !invoiceSynced) {
         await pdvSalesRequestService.syncSaleInvoiceFromOrder(

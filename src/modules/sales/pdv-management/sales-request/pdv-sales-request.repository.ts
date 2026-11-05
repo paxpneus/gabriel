@@ -184,7 +184,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
           attributes: ["id", "number_order_system", "number_order_channel", "date"],
           include: [
             { model: Customer, as: "customer", attributes: ["name"] },
-            { model: UnitBusiness, as: "unitBusiness", attributes: ["number"] },
+            { model: UnitBusiness, as: "unitBusiness", attributes: ["number", "name"] },
           ],
         },
         {

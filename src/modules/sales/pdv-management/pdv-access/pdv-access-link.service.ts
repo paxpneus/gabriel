@@ -32,7 +32,8 @@ function buildFrontendUrl(
 // seu próprio link/token.
 export interface PdvStoreRequestLink {
   unitBusinessId: string;
-  unitBusinessNumber: string;
+  // null no site Pax (sem número) — o link dele usa o nome no lugar.
+  unitBusinessNumber: string | null;
   unitBusinessName: string;
   storeRequestUrl: string;
 }
@@ -61,20 +62,19 @@ export class PdvAccessLinkService {
   // — este service só resolve os valores computados pra quem já tem acesso a
   // alguma tela (via pdvAccess), pra montar/distribuir o link pro time que
   // ainda não tem.
+  // Loja sem número (site Pax) usa o nome como identificador do link (token + `number` da URL).
   private buildStoreRequestLink(
     unitBusiness: Pick<UnitBusinessAttributes, "id" | "number" | "name">,
   ): PdvStoreRequestLink {
+    const linkIdentifier = unitBusiness.number || unitBusiness.name;
     return {
       unitBusinessId: unitBusiness.id,
-      unitBusinessNumber: unitBusiness.number,
+      unitBusinessNumber: unitBusiness.number || null,
       unitBusinessName: unitBusiness.name,
       storeRequestUrl: buildFrontendUrl(
-        computeStoreScreenToken(
-          unitBusiness.number,
-          PdvAccessScreen.STORE_REQUEST,
-        ),
+        computeStoreScreenToken(linkIdentifier, PdvAccessScreen.STORE_REQUEST),
         PdvAccessScreen.STORE_REQUEST.toLowerCase(),
-        unitBusiness.number,
+        linkIdentifier,
       ),
     };
   }
@@ -123,8 +123,8 @@ export class PdvAccessLinkService {
   }
 
   // unitBusinessId informado: `store` com o link dessa loja. Omitido:
-  // `stores` com todas as lojas comerciais (mesmo filtro de
-  // getComercialUnitBusinessOnly — exclui marketplace/loja "0" — mais
+  // `stores` com todas as lojas comerciais + site Pax (getComercialUnitBusinessOnly
+  // — exclui marketplace/loja "0" — mais
   // PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS, ver isExcludedFromStoreRequestLink).
   // `general`/`unsupportedUnitBusinessNumbers` vêm sempre, calculados uma
   // única vez (nunca por loja, evita N+1 e repetição na listagem completa).

@@ -24,8 +24,8 @@ import {
   invoicedSalesDetailOrderWhere,
   salesDetailUnitBusinessWhere,
 } from "./helpers/sales-detail-filters";
+import { UNASSIGNED_SELLER_NAME } from "../../contacts/contacts.types";
 
-const VENDEDOR_NAO_ATRIBUIDO = "Vendedor 0";
 
 export class OrderItemsService extends BaseService<
   OrderItems,
@@ -135,7 +135,7 @@ export class OrderItemsService extends BaseService<
                 as: "seller",
                 attributes: ["id", "name"],
                 required: true,
-                where: { name: { [Op.ne]: VENDEDOR_NAO_ATRIBUIDO } },
+                where: { name: { [Op.ne]: UNASSIGNED_SELLER_NAME } },
               },
               {
                 model: Customer,
@@ -292,7 +292,7 @@ export class OrderItemsService extends BaseService<
 
       const sellerName = order?.seller?.name ?? null;
       const commissionValue =
-        sellerName === VENDEDOR_NAO_ATRIBUIDO
+        sellerName === UNASSIGNED_SELLER_NAME
           ? null
           : Number(item.commission_value ?? 0);
 

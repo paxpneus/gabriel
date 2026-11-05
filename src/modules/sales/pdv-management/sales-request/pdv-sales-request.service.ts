@@ -126,6 +126,7 @@ import {
 } from "../../../warehouse/fiscal/invoices/invoice/helpers/reference-description";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 import { isWithinPhysicalStoreRange } from "../../../company/unit-business/helpers/physical-numbered-unit-business";
+import { WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM } from "../../../company/unit-business/helpers/website-pax-unit-business";
 import {
   orderNumberSystemMatchesLiteral,
   orderCustomerNameMatchesLiteral,
@@ -368,17 +369,26 @@ export class PdvSalesRequestService extends BaseService<
     return buildExpeditionProgress(batchStatus);
   }
 
+  // Universo de lojas do PDV: lojas físicas normais (número 1-24, CD21 inclusa, exceto
+  // PDV_EXCLUDED_STORE_NUMBERS) + site Pax (única online, só pedido com vendedor válido).
+  async getPdvUnitBusinessIds(): Promise<string[]> {
+    const [physicalIds, websitePaxId] = await Promise.all([
+      unitBusinessService.getPhysicalNumberedUnitBusinessIds(
+        PDV_EXCLUDED_STORE_NUMBERS,
+      ),
+      unitBusinessService.getWebsitePaxUnitBusinessId(),
+    ]);
+    if (!websitePaxId) return physicalIds;
+    return [...physicalIds, websitePaxId];
+  }
+
   // Acesso global sem loja selecionada (CD21/Financeiro sempre, Televendas
-  // quando não escolhe loja) — resolve pra "todas as lojas físicas normais"
-  // (número 1-24, incluindo a própria CD21, exceto PDV_EXCLUDED_STORE_NUMBERS),
-  // nunca online/marketplace. Ver unitBusinessService.getPhysicalNumberedUnitBusinessIds.
+  // quando não escolhe loja) — resolve pro universo inteiro do PDV (getPdvUnitBusinessIds).
   private async resolveUnitBusinessScope(
     unitBusinessId: string | null,
   ): Promise<string | string[]> {
     if (unitBusinessId) return unitBusinessId;
-    return unitBusinessService.getPhysicalNumberedUnitBusinessIds(
-      PDV_EXCLUDED_STORE_NUMBERS,
-    );
+    return this.getPdvUnitBusinessIds();
   }
 
   private async unitBusinessScopeWhere(
@@ -398,9 +408,11 @@ export class PdvSalesRequestService extends BaseService<
   // quanto a loja placeholder "SEM_LOJA" (bling-order.service.ts, pedido cuja
   // loja não resolveu no Bling: number "0", fora do range, sem type PHYSICAL),
   // que senão ganhava PdvSalesRequest órfã e invisível em qualquer tela.
+  // Exceção: site Pax (ONLINE, sem número) participa — vendedor válido é checado em isEligibleForPdv.
   private async isExcludedFromPdvFlow(unitBusinessId: string): Promise<boolean> {
     const unitBusiness = await unitBusinessService.findById(unitBusinessId);
     if (!unitBusiness) return false;
+    if (unitBusiness.id_system === WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM) return false;
     if (unitBusiness.type !== "PHYSICAL") return true;
     if (!isWithinPhysicalStoreRange(unitBusiness.number)) return true;
     return PDV_EXCLUDED_STORE_NUMBERS.includes(unitBusiness.number ?? "");
@@ -568,9 +580,13 @@ export class PdvSalesRequestService extends BaseService<
       return [];
     }
 
-    const scope = await this.resolveUnitBusinessScope(unitBusinessId);
+    const [scope, websitePaxId] = await Promise.all([
+      this.resolveUnitBusinessScope(unitBusinessId),
+      unitBusinessService.getWebsitePaxUnitBusinessId(),
+    ]);
     const orders = await orderService.findEligibleForPdvByUnitBusiness(
       scope,
+      websitePaxId,
       ELIGIBLE_ORDERS_LIMIT,
     );
     if (!orders.length) return [];
@@ -762,7 +778,9 @@ export class PdvSalesRequestService extends BaseService<
     const order = await orderService.findById(orderId);
     if (!order?.unit_business_id) return null;
     if (await this.isExcludedFromPdvFlow(order.unit_business_id)) return null;
-    if (!(await orderService.isEligibleForPdv(orderId))) return null;
+    // Site Pax: só pedido com vendedor válido (ver orderHasValidSellerWhenRequiredLiteral).
+    const websitePaxId = await unitBusinessService.getWebsitePaxUnitBusinessId();
+    if (!(await orderService.isEligibleForPdv(orderId, websitePaxId))) return null;
     if (await this.repository.findByOrderId(orderId)) return null;
 
     return this.createRequest({ orderId });
@@ -940,7 +958,10 @@ export class PdvSalesRequestService extends BaseService<
     if (
       !order.unit_business_id ||
       (await this.isExcludedFromPdvFlow(order.unit_business_id)) ||
-      !(await orderService.isEligibleForPdv(params.orderId))
+      !(await orderService.isEligibleForPdv(
+        params.orderId,
+        await unitBusinessService.getWebsitePaxUnitBusinessId(),
+      ))
     ) {
       throw new Error("Pedido não é elegível para o fluxo PDV");
     }

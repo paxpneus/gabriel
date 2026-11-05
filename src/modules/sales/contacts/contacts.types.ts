@@ -6,6 +6,9 @@ export const SELLER_MANAGER_CONTACT_TYPE: ContactType = "SELLER_MANAGER";
 /** Tipos que contam como vendedor (busca do vendedor do Bling, escopo de vendedor); gerente também vende. */
 export const SELLER_CONTACT_TYPES: ContactType[] = ["SELLER", SELLER_MANAGER_CONTACT_TYPE];
 
+/** Vendedor genérico do Bling (pedido sem vendedor de verdade, ex.: marketplace) — não conta como vendedor válido. */
+export const UNASSIGNED_SELLER_NAME = "Vendedor 0";
+
 export interface ContactAttributes {
   id: string;
   name: string;

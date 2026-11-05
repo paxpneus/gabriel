@@ -55,7 +55,7 @@ const boardRow = {
     number_order_channel: "C-1",
     date: "2026-10-02",
     customer: { name: "Cliente" },
-    unitBusiness: { number: "07" },
+    unitBusiness: { number: "07", name: "Loja 7" },
   },
   saleInvoice: {
     number_system: "5001",
@@ -114,8 +114,8 @@ describe("toBoardCard", () => {
     expect(card.next_action).toBe("Enviar solicitação para análise");
   });
 
-  it.each(["finance", "cd21", "telesales"] as const)("%s: inclui order.unitBusiness.number", (screen) => {
-    expect(toBoardCard(boardRow, screen).order!.unitBusiness).toEqual({ number: "07" });
+  it.each(["finance", "cd21", "telesales"] as const)("%s: inclui order.unitBusiness.number e name", (screen) => {
+    expect(toBoardCard(boardRow, screen).order!.unitBusiness).toEqual({ number: "07", name: "Loja 7" });
   });
 
   it("sem sale_invoice_danfe_printed na linha → saleInvoice.danfe_printed false", () => {

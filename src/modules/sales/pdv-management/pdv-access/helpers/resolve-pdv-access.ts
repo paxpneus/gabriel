@@ -1,6 +1,8 @@
+import { Op } from "sequelize";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import userService from "../../../../company/users/users/user.service";
 import { CD21_UNIT_BUSINESS_NUMBER } from "../../../../company/unit-business/helpers/cd21-unit-business-number";
+import { WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM } from "../../../../company/unit-business/helpers/website-pax-unit-business";
 import { PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS } from "../../helpers/pdv-excluded-unit-business";
 import { FINANCE_USER_TYPE } from "../../../../../shared/constants/user-types";
 import { PdvAccessContext, PdvAccessScreen } from "../pdv-access.types";
@@ -36,13 +38,18 @@ const UNSUPPORTED_STORE = "UNSUPPORTED_STORE";
 // - loja é a CD21 (number da unit business) → CD21 (global, sem loja);
 // - loja que o PDV não atende (12/17, ver PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS)
 //   → UNSUPPORTED_STORE (403 sem link);
-// - qualquer outra loja → STORE_REQUEST, escopado nela.
+// - qualquer outra loja → STORE_REQUEST, escopado nela (site Pax também, mesmo sem número).
 // unit_business_id/unitBusiness.number/type já vêm de graça em
 // getMe/getFullUser (user.repository.ts) — sem query extra aqui.
 function resolveScreenForUser(
   user: any,
 ): PdvAccessScreen | typeof UNSUPPORTED_STORE | null {
   if (user.type === FINANCE_USER_TYPE) return PdvAccessScreen.FINANCE;
+
+  // Site Pax não tem número (identificado pelo id no Bling), mas opera o PDV como loja.
+  if (user.unitBusiness?.id_system === WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM) {
+    return PdvAccessScreen.STORE_REQUEST;
+  }
 
   const storeNumber: string | undefined = user.unitBusiness?.number;
   if (storeNumber === CD21_UNIT_BUSINESS_NUMBER) return PdvAccessScreen.CD21;
@@ -152,15 +159,24 @@ export async function resolveLinkAccess(
     };
   }
 
+  // Site Pax não tem número: o link dele manda o nome no lugar (pdv-access-link.service.ts).
   const unitBusiness = await unitBusinessService.findOne({
-    where: { number: unitBusinessNumber },
+    where: {
+      [Op.or]: [
+        { number: unitBusinessNumber },
+        { id_system: WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM, name: unitBusinessNumber },
+      ],
+    },
   });
   if (!unitBusiness) {
     return { error: { status: 404, message: "Loja não encontrada." } };
   }
+  const isWebsitePax = unitBusiness.id_system === WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM;
 
   for (const screen of requiredScreens) {
     if (screen === PdvAccessScreen.FINANCE) continue; // já tratado acima
+    // Site Pax é só loja (solicitação) — nunca CD21 por link.
+    if (isWebsitePax && screen !== PdvAccessScreen.STORE_REQUEST) continue;
     const expected = computeStoreScreenToken(unitBusinessNumber, screen);
     if (tokensMatch(token, expected)) {
       return {

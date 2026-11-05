@@ -382,7 +382,8 @@ export interface PdvBoardCard {
     date: string | null;
     customer: { name: string } | null;
     // Só nas telas que veem todas as lojas (finance/cd21/telesales).
-    unitBusiness?: { number: string } | null;
+    // number null no site Pax (loja online sem número) — front exibe o name.
+    unitBusiness?: { number: string | null; name: string } | null;
   } | null;
   saleInvoice: {
     number_system: string | null;
