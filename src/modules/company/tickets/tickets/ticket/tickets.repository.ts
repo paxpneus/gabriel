@@ -34,6 +34,9 @@ export class TicketRepository extends BaseRepository<Ticket> {
         ...extraOptions,
         include: [
           { association: "requester" },
+          // Quem abriu/fechou: só id e nome.
+          { association: "openedBy", attributes: ["id", "name"] },
+          { association: "closedBy", attributes: ["id", "name"] },
           { model: Area, as: "area" },
           { model: Priority, as: "priority" },
           { model: TicketStatus, as: "status" },
@@ -53,6 +56,9 @@ export class TicketRepository extends BaseRepository<Ticket> {
     where: { id },
     include: [
       { association: "requester" },
+      // Quem abriu/fechou: só id e nome.
+      { association: "openedBy", attributes: ["id", "name"] },
+      { association: "closedBy", attributes: ["id", "name"] },
       { model: Area, as: "area" },
       { model: Priority, as: "priority" },
       { model: TicketStatus, as: "status" },

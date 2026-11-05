@@ -13,6 +13,8 @@ class Ticket
   public title!: string;
   public description!: string;
   public requester_user_id!: string;
+  public opened_by!: string | null;
+  public closed_by!: string | null;
   public area_id!: string;
   public priority_id!: string;
   public status_id!: string | null;
@@ -30,6 +32,17 @@ Ticket.init(
     requester_user_id: {
       type: DataTypes.UUID,
       allowNull: false,
+      references: { model: "users", key: "id" },
+    },
+    // Quem abriu/fechou no sistema (usuário logado); o solicitante vem no body.
+    opened_by: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "users", key: "id" },
+    },
+    closed_by: {
+      type: DataTypes.UUID,
+      allowNull: true,
       references: { model: "users", key: "id" },
     },
     area_id: {

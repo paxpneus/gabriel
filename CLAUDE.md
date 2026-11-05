@@ -123,6 +123,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `unit-business-group.md` — UnitBusinessGroup + pivot `unit_business_group_members` (N:N de unit businesses), rotas, permissão
 - `contact.md` — Contact (vendedores): tipos `SELLER`/`SELLER_MANAGER` (gerente da loja, comissão de gerente), `SELLER_CONTACT_TYPES` nas buscas de vendedor do Bling
 - `customer.md` — Customer: enum `type`, documento nullable, fallback quando Bling manda `tipoPessoa`/`numeroDocumento` vazios
+- `ticket.md` — Ticket: `requester_user_id` obrigatório no body (não é o logado), `opened_by`/`closed_by` pelo usuário logado, backfill m336
 - `store.md` — Store (tipo canal de venda, não filial), fix de dedup
 - `stock-movement.md` — módulo stock/stock_movements
 - `inventory-batch.md` — InventoryBatch/Items/Logs (contagem de inventário), modos FIXED/CYCLIC, gate de integration mapping

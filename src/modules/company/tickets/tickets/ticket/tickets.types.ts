@@ -20,6 +20,8 @@ export interface TicketAttributes {
   title: string;
   description: string;
   requester_user_id: string;
+  opened_by?: string | null;
+  closed_by?: string | null;
   area_id: string;
   priority_id: string;
   status_id: string | null;
@@ -37,6 +39,8 @@ export interface TicketCreationAttributes extends Omit<
 
 export interface FullTicket extends Ticket {
   requester: User,
+  openedBy: User | null,
+  closedBy: User | null,
   area: Area,
   status: TicketStatus,
   assignees: FullTicketAssignee,

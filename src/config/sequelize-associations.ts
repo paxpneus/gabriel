@@ -1515,6 +1515,8 @@ User.hasMany(Ticket, {
   as: "requestedTickets",
 });
 Ticket.belongsTo(User, { foreignKey: "requester_user_id", as: "requester" });
+Ticket.belongsTo(User, { foreignKey: "opened_by", as: "openedBy" });
+Ticket.belongsTo(User, { foreignKey: "closed_by", as: "closedBy" });
 Area.hasMany(Ticket, { foreignKey: "area_id", as: "tickets" });
 Ticket.belongsTo(Area, { foreignKey: "area_id", as: "area" });
 Priority.hasMany(Ticket, { foreignKey: "priority_id", as: "tickets" });

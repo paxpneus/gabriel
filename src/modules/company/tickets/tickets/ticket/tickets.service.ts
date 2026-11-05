@@ -204,7 +204,8 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
           {
             ticket_id: ticket.id,
             status_id: ticket.status_id,
-            changed_by_user_id: ticket.requester_user_id,
+            // Autor da abertura é quem cadastrou, não o solicitante.
+            changed_by_user_id: ticket.opened_by ?? null,
             changed_at: ticket.createdAt,
           },
           { transaction },
@@ -324,6 +325,8 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
             {
               status_id: status.id,
               completed_at: completedAt,
+              // Acompanha completed_at: quem fechou; reaberto limpa.
+              closed_by: completedAt ? changedByUserId ?? null : null,
               due_status: dueStatus,
             },
             { transaction },

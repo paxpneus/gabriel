@@ -114,6 +114,26 @@ export class TicketController extends BaseController<Ticket, TicketService> {
     }
   };
 
+  // Solicitante é obrigatório no body; quem abriu é sempre o usuário logado.
+  create = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (!req.body?.requester_user_id) {
+        return res
+          .status(400)
+          .json({ error: "Erro: solicitante (requester_user_id) não informado" });
+      }
+
+      const record = await this.service.create({
+        ...req.body,
+        opened_by: (req as AuthenticatedRequest).user?.id ?? null,
+        closed_by: null,
+      });
+      return res.status(201).json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
   changeStatus = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { id } = req.params;
