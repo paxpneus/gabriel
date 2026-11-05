@@ -420,6 +420,7 @@ export abstract class BaseQueueService<T, R = void> {
   // que terminou com sucesso mas sem side-effect nenhum (ex.: nota sem item
   // de pneu) — só funciona se o job foi enfileirado com removeOnComplete de
   // retenção, senão ele já saiu do Redis e nunca aparece aqui.
+  // getJobs devolve undefined pra job removido entre listar o id e carregar (fila movimentada) — por isso o `job?`.
   async getPendingJobIds(includeCompleted = false): Promise<Set<string>> {
     const jobs = await this.queue.getJobs([
       "waiting",
@@ -428,7 +429,7 @@ export abstract class BaseQueueService<T, R = void> {
       "prioritized",
       ...(includeCompleted ? (["completed"] as const) : []),
     ]);
-    return new Set(jobs.map((job) => job.id).filter((id): id is string => !!id));
+    return new Set(jobs.map((job) => job?.id).filter((id): id is string => !!id));
   }
 
   // jobIds em "failed" cujo failedReason começa com o prefixo — pra quem quer manter
@@ -437,7 +438,7 @@ export abstract class BaseQueueService<T, R = void> {
     const jobs = await this.queue.getJobs(["failed"]);
     return new Set(
       jobs
-        .filter((job) => job.failedReason?.startsWith(reasonPrefix))
+        .filter((job) => job?.failedReason?.startsWith(reasonPrefix))
         .map((job) => job.id)
         .filter((id): id is string => !!id),
     );
@@ -454,7 +455,7 @@ export abstract class BaseQueueService<T, R = void> {
       "prioritized",
     ]);
     const nameSet = new Set(names);
-    return jobs.some((job) => nameSet.has(job.name));
+    return jobs.some((job) => !!job && nameSet.has(job.name));
   }
 
   // Inverso de hasPendingJobsNamed: existe job pendente cujo `name` NÃO está na lista?
@@ -467,7 +468,7 @@ export abstract class BaseQueueService<T, R = void> {
       "prioritized",
     ]);
     const nameSet = new Set(names);
-    return jobs.some((job) => !nameSet.has(job.name));
+    return jobs.some((job) => !!job && !nameSet.has(job.name));
   }
 
   // Redelay: devolve o job pra fila de delayed e sai do processor sem marcar
