@@ -262,7 +262,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `bling-sync-routes.md` — rotas `/api/bling-sync` (populate em massa em background de produto/nota/pedido com limite), auth usuário ou application, lock/status em Redis
 - `manual-import.md` — import manual por integração (`/api/manual-import`, Bling: produto/nota/pedido; Tecinco: produto/nota): busca → escolha → fila com prioridade 1, lock por usuário + claim por item no Redis, andamento por polling
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login
-- `reports.md` — módulo de snapshot de sales-report
+- `reports.md` — módulo de snapshot de sales-report; operação diária com snapshot por `type` e transbordo contado à parte
 - `integration-pending-report.md` — relatório de pendências de integração (overrides, produto com 2+ códigos no ERP, EAN duplicado no ERP, SKU duplicado no ERP, sem EAN, não mapeado), só admin/developer, sem paginação
 - `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
 - `sieg-rate-limits.md` — limites documentados por rota da API Sieg (ex.: `/v1/baixar-xmls` = 2 req/min, 50 XMLs/req) vs. limite genérico não-confirmado, onde cada um é aplicado no código

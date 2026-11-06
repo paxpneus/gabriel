@@ -30,6 +30,8 @@ O hasOne devolve **um vínculo qualquer** quando a nota tem vários (emissora, C
 - Cancelamento tira a nota de **todo** lote aberto (`findOpenIdsByInvoiceId`, ver `../invoice/index.md`).
 - Sem mudança: `findInvoicesPendingLogisticOccurrence`, `findDeliveryNoteGeneratedInvoiceIds`, `helpers/delivery-note.ts` (restritos à loja emissora/destinatária ou à própria loja).
 
-## Pendente (próximos blocos)
-- Relatório de operação diária: snapshot por `(invoice_id, unit_business_id, type)` + `is_transshipment` ("Entrada/Saída transbordo"). **Até lá, uma nota com as 2 linhas na mesma loja derruba o upsert do snapshot** (`ON CONFLICT (invoice_id, unit_business_id)` afetando a mesma linha 2 vezes).
+## Relatório de operação diária
+Snapshot por `(invoice_id, unit_business_id, type)` + `is_transshipment`; no fato do dia o transbordo fica fora dos indicadores normais e conta em `transshipment_incoming_count`/`transshipment_outgoing_count`. Detalhes em `../../modules/reports.md` (`daily-operation/`).
+
+## Pendente
 - Rota do QR do romaneio (`POST /api/batch/from-qr-code`, body `{ batchId }` do lote de expedição): `type` resolvido por nota (emissora → expedição, destinatária → entrada, transbordo → entrada se ainda não tem lote de entrada na loja, senão expedição).

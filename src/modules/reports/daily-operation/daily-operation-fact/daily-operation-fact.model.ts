@@ -36,6 +36,8 @@ class DailyOperationFact
   public invoices_outgoing_pending_cancelled?: number;
   public incoming_perf_invoice_count?: number;
   public advance_payment_count?: boolean;
+  public transshipment_incoming_count?: number;
+  public transshipment_outgoing_count?: number;
   public last_updated_at?: Date;
 
   public readonly createdAt!: Date;
@@ -105,6 +107,17 @@ DailyOperationFact.init(
     },
     incoming_perf_invoice_count: { type: DataTypes.INTEGER, defaultValue: 0 },
     advance_payment_count: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      allowNull: false,
+    },
+    // Notas de transbordo do dia (loja nem emissora nem destinatária), fora dos indicadores normais.
+    transshipment_incoming_count: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      allowNull: false,
+    },
+    transshipment_outgoing_count: {
       type: DataTypes.INTEGER,
       defaultValue: 0,
       allowNull: false,

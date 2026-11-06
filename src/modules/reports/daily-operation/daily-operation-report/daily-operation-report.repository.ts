@@ -226,10 +226,12 @@ export class DailyOperationReportRepository {
       -- (invoice_id, unit_business_id) via expedition_batches.unit_business_id.
       -- Sem isso, um batch de OUTRA unit_business para a mesma invoice
       -- "vazava" quantidade recebida para esta unit_business.
+      -- flow_type: no transbordo a loja tem lote de entrada e de expedição — separa por type; nas demais fica NULL (todos os lotes da loja).
       batch_item_totals AS (
         SELECT
           ebi.invoice_id,
           eb.unit_business_id,
+          CASE WHEN ebi.is_transshipment THEN eb.type::text END AS flow_type,
           COALESCE(SUM(bii.quantity_read), 0)::integer AS total_received
         FROM expedition_batch_invoices ebi
         JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
@@ -237,7 +239,7 @@ export class DailyOperationReportRepository {
         JOIN affected a
           ON a.invoice_id = ebi.invoice_id
          AND a.unit_business_id = eb.unit_business_id
-        GROUP BY ebi.invoice_id, eb.unit_business_id
+        GROUP BY ebi.invoice_id, eb.unit_business_id, 3
       ),
       -- Mesma correção: scans só contam para o par (invoice_id, unit_business_id)
       -- cujo batch pertence a essa unit_business.
@@ -245,6 +247,7 @@ export class DailyOperationReportRepository {
         SELECT
           ebi.invoice_id,
           eb.unit_business_id,
+          CASE WHEN ebi.is_transshipment THEN eb.type::text END AS flow_type,
           MIN(esl.created_at) AS first_scan_at,
           MAX(esl.created_at) AS last_scan_at
         FROM expedition_scan_logs esl
@@ -253,14 +256,15 @@ export class DailyOperationReportRepository {
         JOIN affected a
           ON a.invoice_id = ebi.invoice_id
          AND a.unit_business_id = eb.unit_business_id
-        GROUP BY ebi.invoice_id, eb.unit_business_id
+        GROUP BY ebi.invoice_id, eb.unit_business_id, 3
       ),
       -- batch_data também precisa ser por (invoice_id, unit_business_id):
       -- pega o batch mais antigo dessa invoice DENTRO dessa unit_business.
       batch_data AS (
-        SELECT DISTINCT ON (ebi.invoice_id, eb.unit_business_id)
+        SELECT DISTINCT ON (ebi.invoice_id, eb.unit_business_id, flow_type)
           ebi.invoice_id,
           eb.unit_business_id,
+          CASE WHEN ebi.is_transshipment THEN eb.type::text END AS flow_type,
           eb.delivery_note_generated_at,
           eb.created_at AS batch_created_at,
           eb.transporters_id AS batch_transporter_id
@@ -269,24 +273,35 @@ export class DailyOperationReportRepository {
         JOIN affected a
           ON a.invoice_id = ebi.invoice_id
          AND a.unit_business_id = eb.unit_business_id
-        ORDER BY ebi.invoice_id, eb.unit_business_id, ebi.created_at ASC
+        ORDER BY ebi.invoice_id, eb.unit_business_id, flow_type, ebi.created_at ASC
       ),
+      -- Transbordo = a nota entrou como transbordo em algum lote da loja; aí cada linha (type) casa só com os lotes do seu type.
       invoice_attrs AS (
         SELECT
           iuba.invoice_id,
           iuba.unit_business_id,
           iuba.type,
           iuba.status,
-          iuba.batch_generated
+          iuba.batch_generated,
+          tr.is_transshipment,
+          CASE WHEN tr.is_transshipment THEN iuba.type::text END AS flow_type
         FROM invoice_unit_business_attributes iuba
         JOIN affected a
           ON a.invoice_id = iuba.invoice_id
          AND a.unit_business_id = iuba.unit_business_id
+        CROSS JOIN LATERAL (
+          SELECT COALESCE(bool_or(ebi.is_transshipment), FALSE) AS is_transshipment
+          FROM expedition_batch_invoices ebi
+          JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
+          WHERE ebi.invoice_id = iuba.invoice_id
+            AND eb.unit_business_id = iuba.unit_business_id
+        ) tr
       ),
       supplier_returns AS (
         SELECT
           ia.invoice_id,
           ia.unit_business_id,
+          ia.type,
           TRUE AS is_supplier_return
         FROM invoice_attrs ia
         JOIN invoices i ON i.id = ia.invoice_id
@@ -300,12 +315,14 @@ export class DailyOperationReportRepository {
         SELECT
           ia.invoice_id,
           ia.unit_business_id,
+          ia.type,
           TRUE AS is_advance_payment
         FROM invoice_attrs ia
         JOIN invoices i ON i.id = ia.invoice_id
         LEFT JOIN batch_data bd
           ON bd.invoice_id = ia.invoice_id
          AND bd.unit_business_id = ia.unit_business_id
+         AND bd.flow_type IS NOT DISTINCT FROM ia.flow_type
         LEFT JOIN transporters t_eff ON t_eff.id = CASE
           WHEN bd.invoice_id IS NOT NULL THEN bd.batch_transporter_id
           ELSE i.transporter_id
@@ -362,21 +379,27 @@ export class DailyOperationReportRepository {
       ELSE 'open'
     END AS snapshot_status,
     COALESCE(sr.is_supplier_return, FALSE) AS is_supplier_return,
-    COALESCE(ap.is_advance_payment, FALSE) AS is_advance_payment
+    COALESCE(ap.is_advance_payment, FALSE) AS is_advance_payment,
+    ia.is_transshipment
   FROM invoices i
   JOIN invoice_attrs ia
     ON ia.invoice_id = i.id
   LEFT JOIN item_expected ie ON ie.invoice_id = i.id
   LEFT JOIN batch_item_totals bit
     ON bit.invoice_id = i.id AND bit.unit_business_id = ia.unit_business_id
+   AND bit.flow_type IS NOT DISTINCT FROM ia.flow_type
   LEFT JOIN scan_bounds sb
     ON sb.invoice_id = i.id AND sb.unit_business_id = ia.unit_business_id
+   AND sb.flow_type IS NOT DISTINCT FROM ia.flow_type
   LEFT JOIN batch_data bd
     ON bd.invoice_id = i.id AND bd.unit_business_id = ia.unit_business_id
+   AND bd.flow_type IS NOT DISTINCT FROM ia.flow_type
   LEFT JOIN supplier_returns sr
     ON sr.invoice_id = ia.invoice_id AND sr.unit_business_id = ia.unit_business_id
+   AND sr.type = ia.type
   LEFT JOIN advance_payments ap
     ON ap.invoice_id = ia.invoice_id AND ap.unit_business_id = ia.unit_business_id
+   AND ap.type = ia.type
 )
       INSERT INTO invoice_operation_snapshots (
         invoice_id,
@@ -397,6 +420,7 @@ export class DailyOperationReportRepository {
         snapshot_status,
         is_supplier_return,
         is_advance_payment,
+        is_transshipment,
         last_updated_at,
         created_at,
         updated_at
@@ -420,13 +444,13 @@ export class DailyOperationReportRepository {
         snapshot_status,
         is_supplier_return,
         is_advance_payment,
+        is_transshipment,
         NOW(),
         NOW(),
         NOW()
       FROM snapshot_source
-      ON CONFLICT (invoice_id, unit_business_id) DO UPDATE SET
+      ON CONFLICT (invoice_id, unit_business_id, type) DO UPDATE SET
         transporter_id                   = EXCLUDED.transporter_id,
-        type                             = EXCLUDED.type,
         invoice_date                     = EXCLUDED.invoice_date,
         emitted_at                       = EXCLUDED.emitted_at,
         delivery_note_generated_at       = EXCLUDED.delivery_note_generated_at,
@@ -441,6 +465,7 @@ export class DailyOperationReportRepository {
         snapshot_status                  = EXCLUDED.snapshot_status,
         is_supplier_return               = EXCLUDED.is_supplier_return,
         is_advance_payment               = EXCLUDED.is_advance_payment,
+        is_transshipment                 = EXCLUDED.is_transshipment,
         last_updated_at                  = NOW(),
         updated_at                       = NOW()
       `,
@@ -486,11 +511,13 @@ export class DailyOperationReportRepository {
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
             )::integer AS invoices_incoming_count,
 
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
             )::integer AS invoices_outgoing_count,
 
@@ -498,11 +525,13 @@ export class DailyOperationReportRepository {
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
             )::integer AS invoices_incoming_total,
 
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
             )::integer AS invoices_outgoing_total,
 
@@ -511,6 +540,7 @@ export class DailyOperationReportRepository {
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND fully_processed_at IS NOT NULL
             )::integer AS invoices_incoming_fully_processed,
 
@@ -518,6 +548,7 @@ export class DailyOperationReportRepository {
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND fully_processed_at IS NOT NULL
             )::integer AS invoices_outgoing_fully_processed,
@@ -528,16 +559,31 @@ export class DailyOperationReportRepository {
                 AND is_supplier_return = TRUE
             )::integer AS supplier_return_count,
 
-            -- Adiantamentos: contagem separada, sem entrar no fluxo
+            -- Adiantamentos: contagem separada, sem entrar no fluxo (transbordo tem contagem própria)
             COUNT(*) FILTER (
               WHERE is_advance_payment = TRUE
+                AND is_transshipment = FALSE
             )::integer AS advance_payment_count,
+
+            -- Transbordo (loja nem emissora nem destinatária): contagem separada, fora dos indicadores normais
+            COUNT(*) FILTER (
+              WHERE type = 'INCOMING'
+                AND is_transshipment = TRUE
+                AND snapshot_status <> 'cancelled'
+            )::integer AS transshipment_incoming_count,
+
+            COUNT(*) FILTER (
+              WHERE type = 'OUTGOING'
+                AND is_transshipment = TRUE
+                AND snapshot_status <> 'cancelled'
+            )::integer AS transshipment_outgoing_count,
 
             -- Canceladas definitivamente (status CANCELLED → snapshot_status 'cancelled').
             -- Ficam fora dos KPIs operacionais mas entram no indicador de cancelamento.
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND snapshot_status = 'cancelled'
             )::integer AS invoices_outgoing_cancelled,
 
@@ -546,6 +592,7 @@ export class DailyOperationReportRepository {
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND snapshot_status = 'pending_cancelled'
             )::integer AS invoices_outgoing_pending_cancelled,
 
@@ -553,6 +600,7 @@ export class DailyOperationReportRepository {
             ROUND(AVG(hours_emission_to_delivery_note) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND hours_emission_to_delivery_note IS NOT NULL
             ), 2) AS outgoing_perf_avg_hours,
@@ -560,6 +608,7 @@ export class DailyOperationReportRepository {
             MIN(hours_emission_to_delivery_note) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND hours_emission_to_delivery_note IS NOT NULL
             ) AS outgoing_perf_min_hours,
@@ -567,6 +616,7 @@ export class DailyOperationReportRepository {
             MAX(hours_emission_to_delivery_note) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND hours_emission_to_delivery_note IS NOT NULL
             ) AS outgoing_perf_max_hours,
@@ -574,6 +624,7 @@ export class DailyOperationReportRepository {
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND hours_emission_to_delivery_note IS NOT NULL
             )::integer AS outgoing_perf_invoice_count,
@@ -583,6 +634,7 @@ export class DailyOperationReportRepository {
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND hours_batch_to_fully_scanned IS NOT NULL
             ), 2) AS incoming_perf_avg_hours,
 
@@ -590,6 +642,7 @@ export class DailyOperationReportRepository {
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND hours_batch_to_fully_scanned IS NOT NULL
             ) AS incoming_perf_min_hours,
 
@@ -597,6 +650,7 @@ export class DailyOperationReportRepository {
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND hours_batch_to_fully_scanned IS NOT NULL
             ) AS incoming_perf_max_hours,
 
@@ -604,6 +658,7 @@ export class DailyOperationReportRepository {
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
                 AND is_advance_payment = FALSE
+                AND is_transshipment = FALSE
                 AND hours_batch_to_fully_scanned IS NOT NULL
             )::integer AS incoming_perf_invoice_count
 
@@ -617,9 +672,12 @@ export class DailyOperationReportRepository {
           JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
           -- Excluir transportadoras internas nos volumes recebidos
           LEFT JOIN transporters t ON t.id = eb.transporters_id
+          -- Volume de nota de transbordo fica fora (a nota conta à parte)
+          LEFT JOIN expedition_batch_invoices ebi ON ebi.id = esl.expedition_batch_invoices_id
           WHERE DATE(esl.created_at) = CAST(:factDate AS date)
             AND eb.unit_business_id = :unitBusinessId
             AND eb.type = 'INCOMING'
+            AND ebi.is_transshipment IS NOT TRUE
             AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
         ),
         volumes_dispatched AS (
@@ -628,9 +686,11 @@ export class DailyOperationReportRepository {
           JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
           -- Excluir transportadoras internas nos volumes expedidos
           LEFT JOIN transporters t ON t.id = eb.transporters_id
+          LEFT JOIN expedition_batch_invoices ebi ON ebi.id = esl.expedition_batch_invoices_id
           WHERE DATE(esl.created_at) = CAST(:factDate AS date)
             AND eb.unit_business_id = :unitBusinessId
             AND eb.type = 'OUTGOING'
+            AND ebi.is_transshipment IS NOT TRUE
             AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
         )
         INSERT INTO daily_operation_facts (
@@ -646,6 +706,8 @@ export class DailyOperationReportRepository {
           invoices_outgoing_fully_processed,
           supplier_return_count,
           advance_payment_count,
+          transshipment_incoming_count,
+          transshipment_outgoing_count,
           invoices_outgoing_cancelled,
           invoices_outgoing_pending_cancelled,
           outgoing_perf_avg_hours,
@@ -673,6 +735,8 @@ export class DailyOperationReportRepository {
           sm.invoices_outgoing_fully_processed,
           sm.supplier_return_count,
           sm.advance_payment_count,
+          sm.transshipment_incoming_count,
+          sm.transshipment_outgoing_count,
           sm.invoices_outgoing_cancelled,
           sm.invoices_outgoing_pending_cancelled,
           sm.outgoing_perf_avg_hours,
@@ -700,6 +764,8 @@ export class DailyOperationReportRepository {
           invoices_outgoing_fully_processed    = EXCLUDED.invoices_outgoing_fully_processed,
           supplier_return_count                = EXCLUDED.supplier_return_count,
           advance_payment_count                = EXCLUDED.advance_payment_count,
+          transshipment_incoming_count         = EXCLUDED.transshipment_incoming_count,
+          transshipment_outgoing_count         = EXCLUDED.transshipment_outgoing_count,
           invoices_outgoing_cancelled          = EXCLUDED.invoices_outgoing_cancelled,
           invoices_outgoing_pending_cancelled  = EXCLUDED.invoices_outgoing_pending_cancelled,
           outgoing_perf_avg_hours              = EXCLUDED.outgoing_perf_avg_hours,
@@ -811,6 +877,7 @@ export class DailyOperationReportRepository {
         AND ios.transporter_id IS NOT NULL
         AND ios.type = 'OUTGOING'
         AND ios.is_advance_payment = FALSE
+        AND ios.is_transshipment = FALSE
         AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
 
       `,
@@ -836,10 +903,13 @@ export class DailyOperationReportRepository {
           JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
           -- Garantia dupla: excluir transportadoras internas
           LEFT JOIN transporters t ON t.id = eb.transporters_id
+          -- Volume de nota de transbordo fica fora, como no fato do dia
+          LEFT JOIN expedition_batch_invoices ebi ON ebi.id = esl.expedition_batch_invoices_id
           WHERE DATE(esl.created_at) = CAST(:factDate AS date)
             AND eb.unit_business_id = :unitBusinessId
             AND eb.transporters_id = :transporterId
             AND eb.type = 'OUTGOING'
+            AND ebi.is_transshipment IS NOT TRUE
             AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
         ),
         invoice_metrics AS (
@@ -853,6 +923,7 @@ export class DailyOperationReportRepository {
             AND type = 'OUTGOING'
             AND is_supplier_return = FALSE
             AND is_advance_payment = FALSE
+            AND is_transshipment = FALSE
             -- Canceladas fora do cômputo de transportadora também
             AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
         )

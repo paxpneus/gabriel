@@ -23,6 +23,8 @@ export interface InvoiceOperationSnapshotAttributes {
   is_supplier_return?: boolean;
   snapshot_status?: InvoiceOperationSnapshotStatus;
   is_advance_payment?: boolean;
+  // Loja de transbordo (nem emissora nem destinatária).
+  is_transshipment?: boolean;
   last_updated_at?: Date;
   createdAt?: Date;
   updatedAt?: Date;

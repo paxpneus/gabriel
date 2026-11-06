@@ -24,6 +24,9 @@ export interface DailyOperationFactAttributes {
   invoices_outgoing_pending_cancelled?: number;
   incoming_perf_invoice_count?: number;
   advance_payment_count?: boolean;
+  // Notas de transbordo do dia, contadas à parte.
+  transshipment_incoming_count?: number;
+  transshipment_outgoing_count?: number;
   last_updated_at?: Date;
   createdAt?: Date;
   updatedAt?: Date;
