@@ -23,7 +23,11 @@ import InvoiceItems from "../../fiscal/invoices/invoice-items/invoice-items.mode
 import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items.service";
 import batchService from "../batch/batch.service";
 import batchInvoicesService from "../batch-invoices/batch-invoices.service";
-import { assertTransshipment } from "../utils/helpers/transshipment-resolver";
+import {
+  assertTransshipment,
+  batchAttributeWhere,
+  BatchType,
+} from "../utils/helpers/transshipment-resolver";
 import InvoiceUnitBusinessAttributes from "../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import roleService from "../../../company/users/roles/role.service";
 import { pendingQuantityWhere } from "../batch-invoice-items/helpers/pending-filter";
@@ -127,7 +131,7 @@ export class ExpeditionScanLogService extends BaseService<
   ): Promise<void> {
     // ── 1. Resolve unit_business_id do lote pai ────────────────────────────
     const batch = await batchService.findById(batchId, {
-      attributes: ["id", "unit_business_id"],
+      attributes: ["id", "unit_business_id", "type"],
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
@@ -198,15 +202,19 @@ export class ExpeditionScanLogService extends BaseService<
 
     if (pendingBatchInvoiceItem) {
       const bi = await batchInvoicesService.findById(batchInvoiceId, {
-        attributes: ["invoice_id"],
+        attributes: ["invoice_id", "is_transshipment"],
         transaction: t,
       });
 
       if (bi) {
         const invoiceId: string = (bi as any).invoice_id;
-        await invoiceService.updateInvoices([invoiceId], unitBusinessId, {
-          status: "PENDING",
-        });
+        // Transbordo: só a linha do type deste lote.
+        await invoiceService.updateInvoices(
+          [invoiceId],
+          unitBusinessId,
+          { status: "PENDING" },
+          batchAttributeWhere(batch.type, bi.is_transshipment ? [invoiceId] : []),
+        );
       }
     }
   }
@@ -270,7 +278,12 @@ export class ExpeditionScanLogService extends BaseService<
         throw new Error("Nota fiscal não carregada corretamente");
       }
 
-      await assertTransshipment(batchInvoice.invoice, unitBusiness);
+      await assertTransshipment(
+        batchInvoice.invoice,
+        unitBusiness,
+        (invoiceRead as any).type as BatchType,
+        t,
+      );
 
       const scanUnitBusinessId: string = (invoiceRead as any).unit_business_id;
 
@@ -442,7 +455,7 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      await assertTransshipment(batchInvoices[0].invoice, unitBusiness);
+      await assertTransshipment(batchInvoices[0].invoice, unitBusiness, "INCOMING", t);
 
       let remaining = quantity;
       const scanLogs: any[] = [];
@@ -594,7 +607,7 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      await assertTransshipment(batchInvoice.invoice, unitBusiness);
+      await assertTransshipment(batchInvoice.invoice, unitBusiness, "INCOMING", t);
 
       this.validateScanQuantity(batchItem, quantity, true);
 
@@ -694,7 +707,12 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      await assertTransshipment(batchInvoice.invoice, unitBusiness);
+      await assertTransshipment(
+        batchInvoice.invoice,
+        unitBusiness,
+        batch.type as BatchType,
+        t,
+      );
 
       this.validateScanQuantity(batchItem, quantity);
 

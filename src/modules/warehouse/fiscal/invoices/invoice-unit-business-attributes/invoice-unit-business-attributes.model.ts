@@ -89,10 +89,11 @@ InvoiceUnitBusinessAttributes.init(
     timestamps: true,
     underscored: true,
     indexes: [
+      // Por type: a loja de transbordo tem entrada e expedição da mesma nota (m341).
       {
         unique: true,
-        fields: ["invoice_id", "unit_business_id"],
-        name: "uq_invoice_unit_business_attributes_invoice_unit_business",
+        fields: ["invoice_id", "unit_business_id", "type"],
+        name: "uq_invoice_unit_business_attributes_invoice_unit_business_type",
       },
     ],
   },

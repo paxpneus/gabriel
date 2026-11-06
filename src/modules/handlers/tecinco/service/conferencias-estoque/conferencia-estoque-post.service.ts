@@ -588,13 +588,22 @@ export class TCarConferenciaPostService {
       );
     }
 
+    // Transbordo: a loja do lote não é emissora nem destinatária, então a nota não gera conferência.
+    const ownBatchInvoices = batchInvoices.filter((bi) => !bi.is_transshipment);
+    if (!ownBatchInvoices.length) {
+      console.log(
+        `[TCarConferenciaPostService] Lote ${batchId} só tem notas de transbordo, sem conferência a postar`,
+      );
+      return [];
+    }
+
     // ── Fase 1: verifica todas antes de postar qualquer uma ───────────────────
     const verificacoes: Array<{
       invoiceId: string;
       verificacao: TCarConferenciaVerificacaoResult;
     }> = [];
 
-    for (const batchInvoice of batchInvoices) {
+    for (const batchInvoice of ownBatchInvoices) {
       const invoice = batchInvoice.invoice;
       const unitBusiness = batchInvoice.batch.unitBusiness;
 

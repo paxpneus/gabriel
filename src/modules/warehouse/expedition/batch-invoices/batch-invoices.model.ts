@@ -7,6 +7,7 @@ class ExpeditionBatchInvoice extends Model<ExpeditionBatchInvoiceAttributes, Exp
   public id!: string;
   public expedition_batch_id!: string;
   public invoice_id!: string;
+  public is_transshipment!: boolean;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -35,6 +36,12 @@ ExpeditionBatchInvoice.init(
         model: 'invoices',
         key: 'id',
       },
+    },
+    // Loja do lote não é emissora nem destinatária da nota (transbordo): fica fora da conferência Tecinco.
+    is_transshipment: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
   },
   {

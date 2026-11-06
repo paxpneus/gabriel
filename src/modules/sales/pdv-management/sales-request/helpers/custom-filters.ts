@@ -140,7 +140,7 @@ export function saleInvoiceTransporterSelectorLiteral(
   )`);
 }
 
-// Estágio da nota de venda no lote do CD21 — mesmo vínculo de batchInvoicesService.findBatchIdsByInvoiceIds.
+// Estágio da nota de venda no lote de SAÍDA do CD21 — mesmo vínculo de batchInvoicesService.findBatchIdsByInvoiceIds.
 function saleInvoiceCd21BatchStageSql(stage: PdvBatchStage): string {
   const inCd21Batch = (batchCondition = "") => `EXISTS (
     SELECT 1 FROM expedition_batch_invoices bi
@@ -148,6 +148,7 @@ function saleInvoiceCd21BatchStageSql(stage: PdvBatchStage): string {
     JOIN unit_businesses ub ON ub.id = b.unit_business_id
     WHERE bi.invoice_id = "PdvSalesRequest"."sale_invoice_id"
       AND ub.number = '${CD21_UNIT_BUSINESS_NUMBER}'
+      AND b.type = 'OUTGOING'
       ${batchCondition}
   )`;
 

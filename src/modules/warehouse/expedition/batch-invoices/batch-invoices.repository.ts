@@ -1,4 +1,4 @@
-import { Op } from 'sequelize';
+import { Op, Transaction } from 'sequelize';
 import BaseRepository from '../../../../shared/utils/base-models/base-repository';
 import ExpeditionBatch from '../batch/batch.model';
 import ExpeditionBatchInvoice from './batch-invoices.model';
@@ -9,9 +9,12 @@ export class ExpeditionBatchInvoiceRepository extends BaseRepository<ExpeditionB
     super(ExpeditionBatchInvoice);
   }
 
+  // type: a loja de transbordo tem lote de entrada e de expedição da mesma nota.
   async findBatchIdByInvoiceId(
     invoiceId: string,
     unitBusinessId: string,
+    type?: 'INCOMING' | 'OUTGOING',
+    transaction?: Transaction,
   ): Promise<string | null> {
     const row = await ExpeditionBatchInvoice.findOne({
       where: { invoice_id: invoiceId },
@@ -22,17 +25,19 @@ export class ExpeditionBatchInvoiceRepository extends BaseRepository<ExpeditionB
           as: 'batch',
           required: true,
           attributes: [],
-          where: { unit_business_id: unitBusinessId },
+          where: { unit_business_id: unitBusinessId, ...(type && { type }) },
         },
       ],
+      transaction,
     });
     return row?.expedition_batch_id ?? null;
   }
 
-  // invoice_id → expedition_batch_id dos lotes da loja (notas fora de lote não entram no Map).
+  // invoice_id → expedition_batch_id dos lotes da loja (notas fora de lote não entram no Map); type como em findBatchIdByInvoiceId.
   async findBatchIdsByInvoiceIds(
     invoiceIds: string[],
     unitBusinessId: string,
+    type?: 'INCOMING' | 'OUTGOING',
   ): Promise<Map<string, string>> {
     if (!invoiceIds.length) return new Map();
 
@@ -45,7 +50,7 @@ export class ExpeditionBatchInvoiceRepository extends BaseRepository<ExpeditionB
           as: 'batch',
           required: true,
           attributes: [],
-          where: { unit_business_id: unitBusinessId },
+          where: { unit_business_id: unitBusinessId, ...(type && { type }) },
         },
       ],
     });

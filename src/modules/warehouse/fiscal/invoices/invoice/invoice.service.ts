@@ -510,10 +510,15 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     return this.repository.getFullInvoice(id, unitBusinessId);
   }
 
-  async findByIdFullWithBatch(id: string, unitBusinessId: string) {
+  async findByIdFullWithBatch(
+    id: string,
+    unitBusinessId: string,
+    type?: "INCOMING" | "OUTGOING",
+  ) {
     const invoice = await this.repository.getFullInvoiceWithBatch(
       id,
       unitBusinessId,
+      type,
     );
     const [withViewPoint] = await this.withViewPoints([invoice], unitBusinessId);
     return withViewPoint!;
@@ -1085,6 +1090,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       const existing = await this.repository.findInvoiceAttribute(
         invoiceId,
         unitBusinessId,
+        undefined,
         transaction,
       );
       if (existing) return;

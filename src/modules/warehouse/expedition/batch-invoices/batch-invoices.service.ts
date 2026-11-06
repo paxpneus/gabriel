@@ -17,6 +17,7 @@ import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items
 import { BatchInvoiceItemsCreationAttributes } from "../batch-invoice-items/batch-invoice-items.types";
 import batchService from "../batch/batch.service";
 import { CLOSED_EXPEDITION_BATCH_STATUSES } from "../batch/batch.types";
+import { batchAttributeWhere } from "../utils/helpers/transshipment-resolver";
 
 export class ExpeditionBatchInvoiceService extends BaseService<
   ExpeditionBatchInvoice,
@@ -29,15 +30,23 @@ export class ExpeditionBatchInvoiceService extends BaseService<
   async findBatchIdByInvoiceId(
     invoiceId: string,
     unitBusinessId: string,
+    type?: "INCOMING" | "OUTGOING",
+    transaction?: Transaction,
   ): Promise<string | null> {
-    return this.repository.findBatchIdByInvoiceId(invoiceId, unitBusinessId);
+    return this.repository.findBatchIdByInvoiceId(
+      invoiceId,
+      unitBusinessId,
+      type,
+      transaction,
+    );
   }
 
   async findBatchIdsByInvoiceIds(
     invoiceIds: string[],
     unitBusinessId: string,
+    type?: "INCOMING" | "OUTGOING",
   ): Promise<Map<string, string>> {
-    return this.repository.findBatchIdsByInvoiceIds(invoiceIds, unitBusinessId);
+    return this.repository.findBatchIdsByInvoiceIds(invoiceIds, unitBusinessId, type);
   }
 
   async removeBatchInvoice(
@@ -122,11 +131,15 @@ export class ExpeditionBatchInvoiceService extends BaseService<
         transaction: t,
       });
 
-      // Reseta status da invoice via attributes (batch_generated e status vivem lá)
+      // Reseta status da invoice via attributes (batch_generated e status vivem lá); transbordo só na linha do type do lote.
       await invoiceService.updateInvoices(
         [batchInvoice.invoice_id],
         expeditionBatch.unit_business_id,
         { batch_generated: false, status: "OPEN" },
+        batchAttributeWhere(
+          expeditionBatch.type,
+          batchInvoice.is_transshipment ? [batchInvoice.invoice_id] : [],
+        ),
       );
 
       await scanLogsService.bulkDelete({
@@ -147,10 +160,12 @@ export class ExpeditionBatchInvoiceService extends BaseService<
     }
   }
 
+  // transshipmentInvoiceIds: notas que entram como transbordo na loja do lote (ver assertTransshipment).
   async createBatchInvoiceWithItems(
     batchId: string,
     invoices: Array<Invoice & { items?: InvoiceItemsAttributes[] }>,
     t: Transaction,
+    transshipmentInvoiceIds: ReadonlySet<string> = new Set(),
   ): Promise<{
     batchInvoices: ExpeditionBatchInvoice[];
     volumesAdded: number;
@@ -160,6 +175,7 @@ export class ExpeditionBatchInvoiceService extends BaseService<
       invoices.map((invoice) => ({
         expedition_batch_id: batchId,
         invoice_id: invoice.id,
+        is_transshipment: transshipmentInvoiceIds.has(invoice.id),
       })),
       { transaction: t, returning: true },
     );

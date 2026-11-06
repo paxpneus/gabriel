@@ -24,6 +24,7 @@ export function orderMissingGeneratedDeliveryNoteLiteral() {
     JOIN unit_businesses cd21 ON cd21.id = eb.unit_business_id
       AND cd21.number = ${sequelize.escape(CD21_UNIT_BUSINESS_NUMBER)}
     WHERE ebi.invoice_id = "Order"."invoice_id"
+      AND eb.type = 'OUTGOING'
       AND eb.delivery_note_generated_at IS NOT NULL
   )`);
 }

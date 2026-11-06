@@ -68,7 +68,7 @@ const WARNING_SOURCE_ATTRIBUTES: [ReturnType<typeof literal>, string][] = [
   [transferSenderUnitBusinessMismatchLiteral(), "transfer_sender_unit_business_mismatch"],
 ];
 
-// Lote do CD21 da nota de venda (no máx. 1 por nota por loja, então o hasOne não duplica linha).
+// Lote de saída do CD21 da nota de venda (1 por nota; type porque loja de transbordo também tem lote de entrada da nota).
 const CD21_BATCH_INCLUDE: IncludeOptions = {
   model: ExpeditionBatchInvoice,
   as: "batchInvoice",
@@ -79,6 +79,7 @@ const CD21_BATCH_INCLUDE: IncludeOptions = {
       model: ExpeditionBatch,
       as: "batch",
       attributes: ["number"],
+      where: { type: "OUTGOING" },
       required: true,
       include: [
         {

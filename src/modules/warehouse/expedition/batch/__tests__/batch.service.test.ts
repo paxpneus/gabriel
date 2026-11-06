@@ -56,7 +56,9 @@ jest.mock("../../../../company/unit-business/unit-business.service", () => ({
   default: { findOne: jest.fn() },
 }));
 
+// Só o assertTransshipment (consulta o banco) é mock; os helpers puros do mesmo arquivo seguem reais.
 jest.mock("../../utils/helpers/transshipment-resolver", () => ({
+  ...jest.requireActual("../../utils/helpers/transshipment-resolver"),
   __esModule: true,
   assertTransshipment: jest.fn(),
 }));
@@ -115,7 +117,7 @@ import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
 import batchInvoicesService from "../../batch-invoices/batch-invoices.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
-import { assertTransshipment } from "../../utils/helpers/transshipment-resolver";
+import { assertTransshipment, batchAttributeWhere } from "../../utils/helpers/transshipment-resolver";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { ExpeditionBatchService } from "../batch.service";
 
@@ -233,6 +235,75 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
         ).rejects.toThrow("SENTINEL_CRIOU");
 
         expect((invoiceService as any).updateInvoices).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("transbordo (loja nem emissora nem destinatária)", () => {
+      const keys = ["29260802036483000614550010004404561245674661", "29260802036483000614550010004404561245674662"];
+
+      beforeEach(() => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([
+          makeInvoice({ id: "invoice-1", number_system: "1001", xml_key: keys[0] }),
+          makeInvoice({ id: "invoice-2", number_system: "1002", xml_key: keys[1] }),
+        ]);
+        (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue([]);
+        (pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock).mockResolvedValue(undefined);
+        // invoice-1 é da loja; invoice-2 é transbordo.
+        (assertTransshipment as jest.Mock).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-1" } as any);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-1", status: "OPEN", mode: "REGULAR", transporters_id: null } as any);
+        (batchInvoicesService.createBatchInvoiceWithItems as jest.Mock).mockResolvedValue({ volumesAdded: 2 });
+        jest.spyOn(service, "increment").mockResolvedValue(undefined);
+        (invoiceService as any).updateInvoices = jest.fn().mockResolvedValue(undefined);
+        jest.spyOn((service as any).repository, "getFullBatch").mockResolvedValue({ id: "batch-1" });
+      });
+
+      it("lote misto: marca só a nota de transbordo e a escrita de atributos dela vai só na linha do type do lote", async () => {
+        (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([]);
+
+        await service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-1");
+
+        expect(assertTransshipment).toHaveBeenCalledWith(
+          expect.objectContaining({ id: "invoice-2" }),
+          expect.anything(),
+          "OUTGOING",
+          mockTransaction,
+        );
+        expect(batchInvoicesService.createBatchInvoiceWithItems).toHaveBeenCalledWith(
+          "batch-1",
+          expect.any(Array),
+          mockTransaction,
+          new Set(["invoice-2"]),
+        );
+        expect((invoiceService as any).updateInvoices).toHaveBeenLastCalledWith(
+          ["invoice-1", "invoice-2"],
+          "ub-1",
+          expect.objectContaining({ batch_generated: true, status: "PENDING" }),
+          batchAttributeWhere("OUTGOING", ["invoice-2"]),
+          mockTransaction,
+        );
+      });
+
+      it("nota de transbordo já no lote de ENTRADA da loja não conflita com o lote de expedição", async () => {
+        (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([
+          { invoice_id: "invoice-2", expedition_batch_id: "batch-in", batch: { type: "INCOMING" } },
+        ]);
+
+        await expect(
+          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-1"),
+        ).resolves.toBeDefined();
+      });
+
+      it("nota da própria loja em lote de outro type da loja continua conflitando (regra de sempre)", async () => {
+        (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([
+          { invoice_id: "invoice-1", expedition_batch_id: "batch-in", batch: { type: "INCOMING" } },
+        ]);
+
+        await expect(
+          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-1"),
+        ).rejects.toThrow("Nota(s) 1001 já pertence(m) a outro lote nesta unidade");
       });
     });
 
