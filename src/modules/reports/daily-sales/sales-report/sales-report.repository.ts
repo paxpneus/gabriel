@@ -1916,11 +1916,57 @@ FROM item_calc
       orderIds,
     };
 
+    let report: Awaited<ReturnType<SalesReportRepository["getReportFromFacts"]>>;
     if (hasProductFilter) {
-      return this.getReportFromSnapshots(filters, replacements);
+      report = await this.getReportFromSnapshots(filters, replacements);
+    } else {
+      report = await this.getReportFromFacts(filters, replacements);
     }
 
-    return this.getReportFromFacts(filters, replacements);
+    // Desconto de fornecedor do período pela emissão da nota (mesma data da vigência da regra), não pelo pedido:
+    // só exibição, o total_supplier_discount (pelo order_date) continua sendo o que bate com a contribuição.
+    // Via facts o general só filtra loja, então storeId/state ficam fora pra manter o mesmo recorte.
+    const [invoiceDateDiscount] = await sequelize.query<{ total: string }>(
+      `
+    SELECT COALESCE(SUM(sois.supplier_discount_value), 0) AS total
+    FROM sales_order_item_snapshots sois
+    JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
+    LEFT JOIN products p ON p.id = sois.product_id
+    ${supplierDiscountReferenceDateJoinSql("sois")}
+    WHERE sois.supplier_discount_value <> 0
+      AND (${supplierDiscountReferenceDateSql("sois")} AT TIME ZONE 'America/Sao_Paulo')::date
+          BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+      AND sos.snapshot_status = 'completed'
+      AND (COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
+           OR sois.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))
+      AND (CAST(:storeId AS uuid) IS NULL OR sos.store_id = CAST(:storeId AS uuid))
+      AND (CAST(:state AS varchar) IS NULL OR sois.destination_uf = CAST(:state AS varchar))
+      AND (cardinality(ARRAY[:productIds]::uuid[]) = 0
+           OR sois.product_id = ANY(ARRAY[:productIds]::uuid[]))
+      AND (cardinality(ARRAY[:brandIds]::uuid[]) = 0
+           OR p.brand_id = ANY(ARRAY[:brandIds]::uuid[]))
+      AND (CAST(:tireMeasure AS varchar) IS NULL
+           OR UPPER(TRIM(sois.product_measure)) = UPPER(TRIM(CAST(:tireMeasure AS varchar))))
+      AND (cardinality(ARRAY[:orderIds]::uuid[]) = 0
+           OR sois.order_id = ANY(ARRAY[:orderIds]::uuid[]))
+    `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: {
+          ...replacements,
+          storeId: hasProductFilter ? replacements.storeId : null,
+          state: hasProductFilter ? replacements.state : null,
+        },
+      },
+    );
+
+    return {
+      ...report,
+      general: {
+        ...report.general,
+        total_supplier_discount_by_invoice_date: invoiceDateDiscount?.total ?? 0,
+      },
+    };
   }
 
   /**

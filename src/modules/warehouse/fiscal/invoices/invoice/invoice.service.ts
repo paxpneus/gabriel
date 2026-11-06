@@ -1295,6 +1295,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           "number_system",
           "seller_id",
           "invoice_value",
+          // Só pro `total_products_value` do `summary`.
+          "invoice_products_value",
           "emitted_at",
           "xml_key",
           "sender_name",
@@ -1465,6 +1467,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       supplier_discount_value: number;
       supplier_discount_rule_name: string | null;
     }[] = [];
+    // Notas com pelo menos uma linha no resultado (após os filtros pós-fetch), pros totais da nota no `summary`.
+    const invoicesInResult = new Map<string, Invoice>();
 
     for (const invoice of rows) {
       const invoiceWithRelations = invoice as Invoice & {
@@ -1504,6 +1508,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           continue;
         }
 
+        invoicesInResult.set(invoice.id, invoice);
         result.push({
           number_system: invoice.number_system,
           xml_key: invoice.xml_key ?? null,
@@ -1534,7 +1539,28 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       }
     }
 
-    return result;
+    // Totais em memória, escala fixa pra não perder centavo. Valor da nota conta uma vez por nota e é o da nota
+    // inteira (mesmo da coluna `value`), mesmo com filtro de marca; desconto = o exibido em cada linha (real ou bypass).
+    const sumScaled = (values: (string | number | null | undefined)[]) =>
+      values.reduce<bigint>((acc, value) => acc + (toScaled(value) ?? 0n), 0n);
+    const toAmount = (scaled: bigint) => Number(formatScaled(scaled));
+    const resultInvoices = [...invoicesInResult.values()];
+
+    const summary = {
+      invoices_count: resultInvoices.length,
+      items_quantity: toAmount(sumScaled(result.map((row) => row.quantity))),
+      total_invoice_value: toAmount(
+        sumScaled(resultInvoices.map((invoice) => invoice.invoice_value)),
+      ),
+      total_products_value: toAmount(
+        sumScaled(resultInvoices.map((invoice) => invoice.invoice_products_value)),
+      ),
+      total_supplier_discount: toAmount(
+        sumScaled(result.map((row) => row.supplier_discount_value)),
+      ),
+    };
+
+    return { rows: result, summary };
   }
 
   async getInvoiceSupplierReport(params: QueryParams, unitBusinessId: string) {

@@ -6,6 +6,8 @@ Same `.init()` gap `Product.category` had (see `../../product/index.md`): `m240`
 
 Pipeline: `InvoiceRepository.findSupplierDiscountsByOrderIds(orderIds)` (queries `SalesOrderItemSnapshot` directly — no repository/service of its own, same accepted exception as `InvoiceFiscalItem`) → `InvoiceService.buildSupplierDiscountLookup` (private, shared by both report methods) builds a `Map<"orderId|productId", {value, ruleName, ruleId}>`, resolving `supplier_discount_rule_id → name` via `supplierDiscountRuleService.findManyDetailedByIds`. A line with no matching snapshot row (no order, or never priced through `SalesReportQueue`) reports `0`/`null`, not an error.
 
+`getInvoiceProductReport` returns `{ rows, summary }` (controller: `{ data: rows, summary }`, same shape as `getInvoiceSupplierReport`). `summary` is computed in memory over the rows that survive the post-fetch filters: `invoices_count`, `items_quantity`, `total_invoice_value`/`total_products_value` (once per invoice, the whole invoice's value even with the brand filter on) and `total_supplier_discount` (sum of the displayed per-line value, real or bypass).
+
 ## Two real bugs found testing directly against production data
 
 Confirmed via `psql` + a standalone `tsx` script calling the service functions directly — neither caught by `tsc`, both runtime-only:

@@ -5,7 +5,7 @@ import {
   orderDiscountAmountSql,
   orderNetProductsSql,
 } from "../../../sales/orders/order/helpers/discount";
-import { orderInvoicedSql } from "../../../sales/orders/order/helpers/invoiced";
+import { orderFinalSituationSql, orderInvoicedSql } from "../../../sales/orders/order/helpers/invoiced";
 import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
 import {
   supplierDiscountReferenceDateJoinSql,
@@ -1040,10 +1040,8 @@ WHERE o.seller_id IS NOT NULL
   
   /**
  * Resolve o escopo de acesso a partir do userId:
- * - type === 'seller': restringe a UM seller_id (o contact do próprio user,
- *   onde contacts.type = 'seller') e à unit_business do usuário
- *   (users.unit_business_id — a "casa" do user, não main_unit_business_id,
- *   que é usado especificamente para managers).
+ * - type === 'seller': restringe a UM seller_id (o contact do próprio user),
+ *   sem restringir loja.
  * - type === 'manager': restringe apenas à unit_business do usuário
  *   (main_unit_business_id — mesma coluna já usada em byManager — com
  *   fallback pra unit_business_id caso main_unit_business_id seja NULL).
@@ -1058,7 +1056,6 @@ WHERE o.seller_id IS NOT NULL
 ): Promise<{ sellerId: string | null; unitBusinessId: string | null } | null> {
   const [row] = await sequelize.query<{
     user_id: string;
-    unit_business_id: string;
     main_unit_business_id: string | null;
     config_type: string | null;
     contact_id: string | null;
@@ -1066,7 +1063,6 @@ WHERE o.seller_id IS NOT NULL
     `
     SELECT
       u.id                     AS user_id,
-      u.unit_business_id       AS unit_business_id,
       u.main_unit_business_id  AS main_unit_business_id,
       uc.type                  AS config_type,
       c.id                     AS contact_id
@@ -1082,10 +1078,11 @@ WHERE o.seller_id IS NOT NULL
 
   if (!row) return null;
 
+  // Vendedor vê todas as vendas dele, de qualquer loja (igual ao relatório de comissão); sem contato = nada.
   if (row.config_type === "seller") {
     return {
       sellerId: row.contact_id ?? "00000000-0000-0000-0000-000000000000",
-      unitBusinessId: row.unit_business_id,
+      unitBusinessId: null,
     };
   }
 
@@ -1135,14 +1132,9 @@ async getReport(filters: SellerSalesReportFilters) {
   // brandIds filtra via JOIN em products.brand_id, não pelo texto
   // denormalizado product_brand do snapshot.
   // -------------------------------------------------------------
-  const reportRowsCte = `
-    report_rows AS (
-      SELECT s.*
-      FROM seller_sales_order_item_snapshots s
-      LEFT JOIN products p ON p.id = s.product_id
-      LEFT JOIN contacts sc ON sc.id = s.seller_id
-      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND s.is_valid_sale = TRUE
+  // Filtros (menos o período) compartilhados pelo report_rows e pelo desconto de fornecedor pela data da nota.
+  const reportFiltersSql = `
+        s.is_valid_sale = TRUE
         AND COALESCE(sc.name, '') <> 'Vendedor 0'
         AND (cardinality(ARRAY[:sellerIds]::uuid[]) = 0
              OR s.seller_id = ANY(ARRAY[:sellerIds]::uuid[]))
@@ -1156,6 +1148,16 @@ async getReport(filters: SellerSalesReportFilters) {
              OR s.customer_id = ANY(ARRAY[:customerIds]::uuid[]))
         AND (cardinality(ARRAY[:unitBusinessIds]::uuid[]) = 0
              OR s.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))
+  `;
+
+  const reportRowsCte = `
+    report_rows AS (
+      SELECT s.*
+      FROM seller_sales_order_item_snapshots s
+      LEFT JOIN products p ON p.id = s.product_id
+      LEFT JOIN contacts sc ON sc.id = s.seller_id
+      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
+        AND ${reportFiltersSql}
     )
   `;
 
@@ -1183,8 +1185,34 @@ async getReport(filters: SellerSalesReportFilters) {
         COALESCE(SUM(${storeManagerCommissionSql}), 0) AS total_manager_commission,
         COALESCE(SUM(${regionalManagerCommissionSql}), 0) AS total_regional_manager_commission,
         COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount,
-        COALESCE(SUM(s.icms_value_allocated), 0) AS total_icms
+        COALESCE(SUM(s.icms_value_allocated), 0) AS total_icms,
+        -- Vendas ainda sem comissão (não faturadas), mesmos avisos do relatório de comissão: Em aberto e final sem nota.
+        COUNT(DISTINCT s.order_id) FILTER (WHERE NOT ${orderFinalSituationSql("o")})::int AS orders_open,
+        COUNT(DISTINCT s.order_id) FILTER (
+          WHERE ${orderFinalSituationSql("o")} AND NOT ${orderInvoicedSql("o")}
+        )::int AS orders_final_without_invoice
       FROM report_rows s
+      JOIN orders o ON o.id = s.order_id
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: baseFilterReplacements,
+      },
+    );
+
+    // Desconto de fornecedor do período pela emissão da nota (mesma data da vigência da regra), não pelo pedido:
+    // só exibição, o total_supplier_discount (pelo order_date) continua sendo o que bate com a contribuição.
+    const [invoiceDateDiscount] = await sequelize.query<{ total: string }>(
+      `
+      SELECT COALESCE(SUM(s.supplier_discount_value), 0) AS total
+      FROM seller_sales_order_item_snapshots s
+      LEFT JOIN products p ON p.id = s.product_id
+      LEFT JOIN contacts sc ON sc.id = s.seller_id
+      ${supplierDiscountReferenceDateJoinSql("s")}
+      WHERE s.supplier_discount_value <> 0
+        AND (${supplierDiscountReferenceDateSql("s")} AT TIME ZONE 'America/Sao_Paulo')::date
+            BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
+        AND ${reportFiltersSql}
       `,
       {
         type: QueryTypes.SELECT,
@@ -1478,7 +1506,10 @@ async getReport(filters: SellerSalesReportFilters) {
 
     return {
       filters,
-      summary,
+      summary: {
+        ...(summary as Record<string, unknown>),
+        total_supplier_discount_by_invoice_date: invoiceDateDiscount?.total ?? 0,
+      },
       products,
       ranking: ranking[0],
       byStore,
