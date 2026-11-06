@@ -326,12 +326,14 @@ export interface PdvSalesRequestOrderPaymentMethod {
   description: string;
 }
 
-// Parcelas da mesma forma agrupadas (ver toPaymentsView).
+// Parcelas do mesmo pagamento (forma + parcelas + bandeira) agrupadas (ver toPaymentsView).
 export interface PdvSalesRequestOrderPayment {
   paymentMethod: PdvSalesRequestOrderPaymentMethod | null;
   detail: string | null;
   amount: number;
   installments: number;
+  card_brand: number | null;
+  card_brand_name: string | null;
   first_due_date: string | null;
   last_due_date: string | null;
 }

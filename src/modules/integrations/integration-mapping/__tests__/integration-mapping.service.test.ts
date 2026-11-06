@@ -269,3 +269,104 @@ describe("IntegrationMappingService.findByContactId", () => {
     expect(options.include[0]).toMatchObject({ as: "integration", attributes: ["id", "name"] });
   });
 });
+
+describe("IntegrationMappingService — formas de pagamento (PAYMENT_METHOD)", () => {
+  // Model da forma de pagamento também é auto-mocado (setup.ts); entityRepositoryMap usa a repository real.
+  const PaymentMethod = require("../../../sales/orders/payment_method/payment_method.model").default;
+  let service: IntegrationMappingService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new IntegrationMappingService();
+  });
+
+  it("findMappingsByExternalIds: sem códigos não consulta; com códigos indexa por external_id", async () => {
+    expect((await service.findMappingsByExternalIds("PAYMENT_METHOD", "int", [])).size).toBe(0);
+    expect(IntegrationMapping.findAll).not.toHaveBeenCalled();
+
+    (IntegrationMapping.findAll as jest.Mock).mockResolvedValue([
+      { id: "m1", external_id: "9521718", internal_id: "pm-credit", erp_data: null },
+    ]);
+    const result = await service.findMappingsByExternalIds("PAYMENT_METHOD", "int", ["9521718"]);
+    expect(result.get("9521718")).toMatchObject({ id: "m1", internal_id: "pm-credit" });
+    expect((IntegrationMapping.findAll as jest.Mock).mock.calls[0][0].where).toMatchObject({
+      entity_type: "PAYMENT_METHOD",
+      integrations_id: "int",
+    });
+  });
+
+  it("bulkCreateNonPrimary: uma inserção, todos não principais, ignora duplicado e devolve o que está no banco", async () => {
+    (IntegrationMapping.bulkCreate as jest.Mock).mockResolvedValue([]);
+    (IntegrationMapping.findAll as jest.Mock).mockResolvedValue([
+      { id: "m1", external_id: "1", internal_id: "pm-credit", erp_data: null },
+      { id: "m2", external_id: "2", internal_id: "pm-manual", erp_data: null },
+    ]);
+
+    const result = await service.bulkCreateNonPrimary("PAYMENT_METHOD", "int", [
+      { external_id: "1", internal_id: "pm-credit" },
+      { external_id: "2", internal_id: "pm-credit" },
+    ]);
+
+    const [rows, options] = (IntegrationMapping.bulkCreate as jest.Mock).mock.calls[0];
+    expect(rows.every((row: any) => row.is_primary === false && row.entity_type === "PAYMENT_METHOD")).toBe(true);
+    expect(options).toEqual({ ignoreDuplicates: true });
+    // código "2" já era de outra forma: vale o do banco
+    expect(result.get("2")?.internal_id).toBe("pm-manual");
+  });
+
+  it("bulkCreateNonPrimary: lista vazia não consulta", async () => {
+    expect((await service.bulkCreateNonPrimary("PAYMENT_METHOD", "int", [])).size).toBe(0);
+    expect(IntegrationMapping.bulkCreate).not.toHaveBeenCalled();
+  });
+
+  it("createForExistingEntity: forma do hub inexistente → erro, sem criar", async () => {
+    (PaymentMethod.findByPk as jest.Mock).mockResolvedValue(null);
+    await expect(
+      service.createForExistingEntity(
+        { entity_type: "PAYMENT_METHOD", integrations_id: "int", external_id: "8104554", internal_id: "pm-x" },
+        {} as any,
+      ),
+    ).rejects.toThrow(/não encontrado/);
+    expect(IntegrationMapping.create).not.toHaveBeenCalled();
+  });
+
+  it("createForExistingEntity: código já mapeado pra outra forma → erro (não o no-op silencioso)", async () => {
+    (PaymentMethod.findByPk as jest.Mock).mockResolvedValue({ id: "pm-cash" });
+    (IntegrationMapping.findOne as jest.Mock).mockResolvedValue({ id: "m1", internal_id: "pm-credit" });
+    await expect(
+      service.createForExistingEntity(
+        { entity_type: "PAYMENT_METHOD", integrations_id: "int", external_id: "8104554", internal_id: "pm-cash" },
+        {} as any,
+      ),
+    ).rejects.toThrow(/já está mapeado/);
+  });
+
+  it("createForExistingEntity: cria com erp_data", async () => {
+    (PaymentMethod.findByPk as jest.Mock).mockResolvedValue({ id: "pm-cash" });
+    (IntegrationMapping.findOne as jest.Mock).mockResolvedValue(null);
+    (IntegrationMapping.create as jest.Mock).mockImplementation(async (data: any) => ({ id: "m-new", ...data }));
+
+    const mapping = await service.createForExistingEntity(
+      {
+        entity_type: "PAYMENT_METHOD",
+        integrations_id: "int",
+        external_id: "8104554",
+        internal_id: "pm-cash",
+        erp_data: { name: "Devolução de mercadorias", updated_at: "x" },
+      },
+      {} as any,
+    );
+
+    expect(mapping).toMatchObject({ id: "m-new", internal_id: "pm-cash", erp_data: { name: "Devolução de mercadorias" } });
+  });
+
+  it("findByPaymentMethodId: filtra PAYMENT_METHOD + internal_id, com a integração", async () => {
+    const spy = jest
+      .spyOn((service as any).repository, "findPaginated")
+      .mockResolvedValue({ data: [], meta: {} } as any);
+    await service.findByPaymentMethodId({} as any, "pm-credit");
+    const [, , options, where] = spy.mock.calls[0] as any[];
+    expect(where).toEqual({ entity_type: "PAYMENT_METHOD", internal_id: "pm-credit" });
+    expect(options.include[0]).toMatchObject({ as: "integration", attributes: ["id", "name"] });
+  });
+});

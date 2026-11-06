@@ -162,4 +162,96 @@ describe("paymentMethodsMatchReceipts", () => {
       false,
     );
   });
+
+  it("crédito 2x + 3x Master: cada comprovante bate parcelas e bandeira do seu pagamento", () => {
+    const credit2x = { ...credit, installments: 2, card_brand: 2 };
+    const credit3x = { ...credit, installments: 3, card_brand: 2 };
+    const card = (installments: number, cardBrand: string) => ({
+      ...receipt("cartao_credito"),
+      installments,
+      cardBrand,
+    });
+
+    expect(
+      paymentMethodsMatchReceipts(
+        [credit2x, credit3x],
+        [card(2, "MASTERCARD"), card(3, "Master Card")],
+      ),
+    ).toBe(true);
+    // comprovante de 5x não corresponde a nenhum dos pagamentos
+    expect(
+      paymentMethodsMatchReceipts(
+        [credit2x, credit3x],
+        [card(5, "MASTERCARD")],
+      ),
+    ).toBe(false);
+    // bandeira diferente
+    expect(paymentMethodsMatchReceipts([credit2x], [card(2, "VISA")])).toBe(
+      false,
+    );
+  });
+
+  it("parcelas/bandeira ausentes de um lado não pesam no match", () => {
+    expect(
+      paymentMethodsMatchReceipts(
+        [{ ...credit, installments: 2, card_brand: 2 }],
+        [{ ...receipt("cartao_credito"), installments: null, cardBrand: null }],
+      ),
+    ).toBe(true);
+    expect(
+      paymentMethodsMatchReceipts(
+        [{ ...credit, installments: 2, card_brand: null }],
+        [
+          {
+            ...receipt("cartao_credito"),
+            installments: 2,
+            cardBrand: "Bandeira X",
+          },
+        ],
+      ),
+    ).toBe(true);
+  });
+
+  it("bandeira do comprovante por palavra-chave (acento/espaço/caixa ignorados)", () => {
+    const card = (cardBrand: string) => ({ ...receipt("cartao_credito"), installments: 1, cardBrand });
+    const brand = (code: number) => [{ ...credit, installments: 1, card_brand: code }];
+    expect(paymentMethodsMatchReceipts(brand(1), [card("visa electron")])).toBe(true);
+    expect(paymentMethodsMatchReceipts(brand(3), [card("American Express")])).toBe(true);
+    expect(paymentMethodsMatchReceipts(brand(3), [card("AMEX")])).toBe(true);
+    expect(paymentMethodsMatchReceipts(brand(6), [card("Elo")])).toBe(true);
+    expect(paymentMethodsMatchReceipts(brand(7), [card("Hipercard")])).toBe(true);
+    expect(paymentMethodsMatchReceipts(brand(5), [card("Diners Club International")])).toBe(true);
+    expect(paymentMethodsMatchReceipts(brand(2), [card("Elo")])).toBe(false);
+  });
+
+  it("débito 1x com comprovante de débito sem parcelas: bate", () => {
+    const debit = method("3", "Cartão de Débito");
+    expect(
+      paymentMethodsMatchReceipts(
+        [{ ...debit, installments: 1, card_brand: 1 }],
+        [{ ...receipt("cartao_debito"), installments: null, cardBrand: "VISA" }],
+      ),
+    ).toBe(true);
+  });
+
+  it("forma escolhida no comprovante (id) + parcelas diferentes: não bate", () => {
+    expect(
+      paymentMethodsMatchReceipts(
+        [{ ...credit, installments: 3, card_brand: 2 }],
+        [{ ...receipt(null, "2"), installments: 2, cardBrand: "MASTERCARD" }],
+      ),
+    ).toBe(false);
+  });
+
+  it("dois pagamentos e um comprovante só: falta comprovante pro outro pagamento", () => {
+    expect(
+      paymentMethodsMatchReceipts(
+        [
+          { ...credit, installments: 2, card_brand: 2 },
+          { ...credit, installments: 3, card_brand: 2 },
+        ],
+        [{ ...receipt("cartao_credito"), installments: 2, cardBrand: "MASTERCARD" }],
+      ),
+    ).toBe(false);
+  });
 });

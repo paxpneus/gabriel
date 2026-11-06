@@ -215,6 +215,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `supplier-discount-rule.md` — matching engine, eixos de escopo, coluna computada `name`
 - `integration-mapping.md` — tabela `integration_mappings`, `is_primary` (gate de sync) e `erp_data`, incidente de mapping órfão, regras cross-external-id
 - `audit-log.md` — tabela `audit_logs`: gravação explícita na service, description pra leigo, entrada principal + afetadas
+- `unmapped-entity.md` — tabela genérica `unmapped_entities` (valor da integração sem `integration_mapping`, hoje forma de pagamento Bling), rotas listar + `POST /:id/map`
 - `integration-error.md` — tabela genérica `integration_errors`, upsert-by-find/dedup, logger centralizado (`IntegrationLoggerService`, flag `createIntegrationError`)
 - `unmapped-invoice-product/` — fila de revisão manual
   - `index.md` — regras `type`/dedup, schema

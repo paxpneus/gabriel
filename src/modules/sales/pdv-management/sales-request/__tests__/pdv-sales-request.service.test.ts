@@ -2054,6 +2054,51 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
+    it("pedido antigo (sem parcelas da Bling) 2x+3x no crédito: confere só a forma, não a contagem de 5 parcelas", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      (pdvSalesRequestReceiptService.findById as jest.Mock).mockResolvedValue({
+        id: "receipt-3",
+        pdv_sales_request_id: "r1",
+        path: "/pdv-receipts/r1/extra.png",
+      });
+      const credit = { id: "pm-credit", description: "Cartão de Crédito" };
+      const card = (qtd: number) => ({
+        ...emptyReceiptExtraction,
+        tipo_comprovante: "cartao_credito",
+        qtd_parcelas: qtd,
+        bandeira_cartao: "MASTERCARD",
+      });
+      (
+        pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock
+      ).mockResolvedValue([
+        { id: "receipt-1", analysis: card(2), validated: null },
+        { id: "receipt-2", analysis: card(3), validated: null },
+      ]);
+      (orderService.findByIdWithPayments as jest.Mock).mockResolvedValue({
+        payments: [844.11, 456.36, 844.11, 456.36, 456.38].map((amount) => ({
+          amount,
+          paymentMethod: credit,
+          installments: null,
+          card_brand: null,
+        })),
+        net_total_order: 3057.32,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.deleteReceipt("r1", "receipt-3");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        expect.objectContaining({ payment_method_matches_receipt: true }),
+      );
+    });
+
     it("recusa remover comprovante que não pertence a esta solicitação", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",

@@ -5,7 +5,14 @@ import PaymentMethod from "../../payment_method/payment_method.model";
 export const PAYMENTS_INCLUDE: Includeable = {
   model: OrderPayment,
   as: "payments",
-  attributes: ["id", "amount", "due_date", "form_description"],
+  attributes: [
+    "id",
+    "amount",
+    "due_date",
+    "form_description",
+    "installments",
+    "card_brand",
+  ],
   include: [
     {
       model: PaymentMethod,

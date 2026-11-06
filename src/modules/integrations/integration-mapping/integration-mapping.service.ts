@@ -12,6 +12,7 @@ import {
   ProductIntegrationMappingInput,
   ProductIntegrationMappingSummary,
   ProductErpData,
+  PaymentMethodErpData,
   ErpCodeRow,
   ProductWithMultipleCodes,
 } from "./integration-mapping.types";
@@ -209,10 +210,72 @@ export class IntegrationMappingService extends BaseService<
     return new Map(mappings.map((m) => [m.external_id, { internal_id: m.internal_id, is_primary: !!m.is_primary }]));
   }
 
+  // external_id → { id, internal_id, erp_data } dos códigos informados de um tipo de entidade na integração, numa query.
+  async findMappingsByExternalIds(
+    entityType: EntityType,
+    integrationsId: string,
+    externalIds: string[],
+  ): Promise<Map<string, Pick<IntegrationMapping, "id" | "internal_id" | "erp_data">>> {
+    if (!externalIds.length) return new Map();
+    const mappings = await this.repository.findAll({
+      where: { entity_type: entityType, integrations_id: integrationsId, external_id: { [Op.in]: externalIds } },
+      attributes: ["id", "external_id", "internal_id", "erp_data"],
+    });
+    return new Map(mappings.map((m) => [m.external_id, m]));
+  }
+
+  // Mappings automáticos em lote (ex.: formas de pagamento da Bling) numa query: nascem não principais (vários
+  // nascendo juntos pro mesmo internal_id quebrariam uq_integration_mappings_primary) e código já mapeado é
+  // ignorado (ON CONFLICT DO NOTHING). Devolve o que ficou no banco pra cada código, inclusive o já existente.
+  async bulkCreateNonPrimary(
+    entityType: EntityType,
+    integrationsId: string,
+    rows: { external_id: string; internal_id: string; erp_data?: PaymentMethodErpData | null }[],
+  ): Promise<Map<string, Pick<IntegrationMapping, "id" | "internal_id" | "erp_data">>> {
+    if (!rows.length) return new Map();
+    await this.repository.bulkCreate(
+      rows.map((row) => ({
+        entity_type: entityType,
+        integrations_id: integrationsId,
+        external_id: row.external_id,
+        internal_id: row.internal_id,
+        erp_data: row.erp_data ?? null,
+        is_primary: false,
+      })),
+      { ignoreDuplicates: true },
+    );
+    return this.findMappingsByExternalIds(entityType, integrationsId, rows.map((row) => row.external_id));
+  }
+
+  // Mapping manual de uma pendência (unmapped_entities): checa a entidade interna antes (internal_id não é FK)
+  // e recusa código já mapeado pra outra entidade em vez do no-op silencioso de createOrUpdateIntegrationMapping.
+  async createForExistingEntity(
+    data: {
+      entity_type: EntityType;
+      integrations_id: string;
+      external_id: string;
+      internal_id: string;
+      erp_data?: PaymentMethodErpData | null;
+    },
+    transaction: Transaction,
+  ): Promise<IntegrationMapping> {
+    const entity = await entityRepositoryMap[data.entity_type].findById(data.internal_id, {
+      attributes: ["id"],
+      transaction,
+    });
+    if (!entity) throw new Error("Registro do sistema não encontrado para o mapeamento");
+
+    const mapping = await this.createOrUpdateIntegrationMapping(data, transaction);
+    if (mapping.internal_id !== data.internal_id) {
+      throw new Error(`O código ${data.external_id} no ERP já está mapeado para outro registro`);
+    }
+    return mapping;
+  }
+
   // Grava o snapshot só-leitura do ERP no mapping (principal ou não) — não auditado, é escrita de sync.
   async updateErpData(
     mappingId: string,
-    erpData: ProductErpData,
+    erpData: ProductErpData | PaymentMethodErpData,
     transaction?: Transaction,
   ): Promise<void> {
     await this.repository.bulkUpdate({ erp_data: erpData }, { where: { id: mappingId }, transaction });
@@ -233,7 +296,9 @@ export class IntegrationMappingService extends BaseService<
 
     return mappings.map((m) => {
       let erpData: ProductIntegrationMappingSummary["erp_data"] = null;
-      if (m.erp_data) erpData = { name: m.erp_data.name ?? null, ean: m.erp_data.ean ?? null };
+      // Só mappings PRODUCT nesta query: snapshot é sempre de produto.
+      const productErp = m.erp_data as ProductErpData | null;
+      if (productErp) erpData = { name: productErp.name ?? null, ean: productErp.ean ?? null };
       return { id: m.id, external_id: m.external_id, is_primary: !!m.is_primary, erp_data: erpData };
     });
   }
@@ -247,24 +312,31 @@ export class IntegrationMappingService extends BaseService<
       throw new Error("product_id não informado");
     }
 
-    return this.repository.findPaginated(params, this.queryConfig, {
-      include: [
-        {
-          model: Integration,
-          as: 'integration',
-          attributes: ['id', 'name']
-        }
-      ]
-    }, {
-      entity_type: "PRODUCT",
-      internal_id: productId,
-    });
+    return this.findPaginatedByEntity(params, "PRODUCT", productId);
   }
 
   // Mappings CONTACT (vendedor/gerente) do contato, paginados, com a integração; só leitura (sync do Bling é quem cria).
   findByContactId(
     params: QueryParams,
     contactId: string,
+  ): Promise<PaginatedResult<IntegrationMapping>> {
+    return this.findPaginatedByEntity(params, "CONTACT", contactId);
+  }
+
+  // Mappings PAYMENT_METHOD (formas da integração, ex.: Bling formaPagamento.id) de uma forma do hub, paginados,
+  // com a integração; só leitura (criados pelo sync ou pelo mapeamento de unmapped_entities).
+  findByPaymentMethodId(
+    params: QueryParams,
+    paymentMethodId: string,
+  ): Promise<PaginatedResult<IntegrationMapping>> {
+    return this.findPaginatedByEntity(params, "PAYMENT_METHOD", paymentMethodId);
+  }
+
+  // Lista paginada dos mappings de uma entidade interna, com { id, name } da integração (rotas por produto/contato/forma).
+  private findPaginatedByEntity(
+    params: QueryParams,
+    entityType: EntityType,
+    internalId: string,
   ): Promise<PaginatedResult<IntegrationMapping>> {
     return this.repository.findPaginated(params, this.queryConfig, {
       include: [
@@ -275,8 +347,8 @@ export class IntegrationMappingService extends BaseService<
         }
       ]
     }, {
-      entity_type: "CONTACT",
-      internal_id: contactId,
+      entity_type: entityType,
+      internal_id: internalId,
     });
   }
 

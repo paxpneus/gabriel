@@ -7,6 +7,8 @@ export interface OrderPaymentAttributes {
   due_date: string | null;
   notes: string | null;
   form_description: string | null;
+  installments: number | null;
+  card_brand: number | null;
   createdAt?: Date;
   updatedAt?: Date;
 }

@@ -212,6 +212,8 @@ export const ROLE_PERMISSIONS: Roles[] = [
     children: [
       { entity: 'config_tokens', label: 'Tokens de Configuração' },
       { entity: 'applications', label: 'Aplicativos' },
+      // Pendências de mapeamento (ex.: forma de pagamento nova da Bling): ler lista, escrever mapeia.
+      { entity: 'unmapped_entities', label: 'Pendências de Mapeamento' },
     ],
   },
   {

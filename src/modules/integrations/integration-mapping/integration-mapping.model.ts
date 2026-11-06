@@ -6,6 +6,7 @@ import {
   EntityType,
   ENTITY_TYPES,
   ProductErpData,
+  PaymentMethodErpData,
 } from "./integration-mapping.types";
 import { v4 as uuidv4 } from "uuid";
 
@@ -23,7 +24,7 @@ class IntegrationMapping
   public external_id!: string;
   public unit_business_id!: string;
   public is_primary!: boolean;
-  public erp_data!: ProductErpData | null;
+  public erp_data!: ProductErpData | PaymentMethodErpData | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;

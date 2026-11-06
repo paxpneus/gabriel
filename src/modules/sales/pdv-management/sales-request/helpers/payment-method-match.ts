@@ -1,4 +1,5 @@
 import { normalizeMatchValue } from "../../../../../shared/utils/normalizers/text";
+import { CARD_BRANDS } from "../../../../../shared/constants/card-brands";
 import {
   PaymentReceiptPaymentMethod,
   PaymentReceiptType,
@@ -112,26 +113,61 @@ export function resolvePaymentMethodForReceipt(
 export interface OrderPaymentMethodRef {
   id: string | null;
   description: string | null;
+  installments?: number | null;
+  card_brand?: number | null;
 }
 
 export interface ReceiptPaymentRef {
   type: PaymentReceiptType | null;
   paymentMethodId: string | null;
+  installments?: number | null;
+  // Texto lido do comprovante ("MASTERCARD"); vira código da NF-e na comparação.
+  cardBrand?: string | null;
+}
+
+// Texto do comprovante (sem acento/espaço) → código de bandeira da NF-e, o
+// mesmo de order_payments.card_brand (ver CARD_BRANDS).
+function cardBrandCodeFromText(text: string | null | undefined): number | null {
+  const compact = normalizeDescription(text ?? null)?.replace(/[^A-Z]/g, "");
+  if (!compact) return null;
+  const found = CARD_BRANDS.find((brand) =>
+    brand.keywords.some((keyword) => compact.includes(keyword)),
+  );
+  return found?.code ?? null;
 }
 
 // Forma escolhida/resolvida no comprovante manda (compara por id com a da
-// Bling); sem ela, cai pro tipo extraído por palavra-chave.
+// Bling); sem ela, cai pro tipo extraído por palavra-chave. Parcelas e
+// bandeira só pesam quando os dois lados têm o dado (PIX, pedido antigo).
 function pairMatches(
   method: OrderPaymentMethodRef,
   receipt: ReceiptPaymentRef,
 ): boolean {
-  if (receipt.paymentMethodId) return receipt.paymentMethodId === method.id;
-  return paymentMethodMatchesReceipt(method.description, receipt.type) === true;
+  const methodMatches = receipt.paymentMethodId
+    ? receipt.paymentMethodId === method.id
+    : paymentMethodMatchesReceipt(method.description, receipt.type) === true;
+  if (!methodMatches) return false;
+
+  if (
+    method.installments != null &&
+    receipt.installments != null &&
+    method.installments !== receipt.installments
+  ) {
+    return false;
+  }
+
+  const receiptBrand = cardBrandCodeFromText(receipt.cardBrand);
+  return !(
+    method.card_brand &&
+    receiptBrand &&
+    method.card_brand !== receiptBrand
+  );
 }
 
-// Pedido pode ter várias formas de pagamento (parcelas Bling) e a solicitação
-// vários comprovantes: bate só se TODA forma tem um comprovante correspondente
-// e TODO comprovante corresponde a uma forma. null se faltar dado dos dois lados.
+// Pedido pode ter vários pagamentos (forma + parcelas + bandeira, ver
+// toPaymentsView) e a solicitação vários comprovantes: bate só se TODO
+// pagamento tem um comprovante correspondente e TODO comprovante corresponde
+// a um pagamento. null se faltar dado dos dois lados.
 export function paymentMethodsMatchReceipts(
   orderMethods: OrderPaymentMethodRef[],
   receipts: ReceiptPaymentRef[],

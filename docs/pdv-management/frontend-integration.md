@@ -778,3 +778,11 @@ Ao vincular, a nota também precisa ser transferência de verdade (emitente e de
 da empresa) → senão `400`: `A nota 28921 não é uma transferência entre lojas — emitente e destinatário precisam ser lojas diferentes da empresa.`
 Por XML/DANFE isso é conferido no próprio arquivo, antes de importar. DANFE sem CNPJ do destinatário legível →
 `400 Não foi possível ler o CNPJ do destinatário no DANFE — envie o XML da nota`.
+
+## Mudou: pagamentos do pedido separados por parcelas e bandeira
+
+`order.payments[]` (detalhe do pedido e card do PDV) agora agrupa por forma + parcelas + bandeira, não só pela forma.
+Pedido Bling com "Crédito Master 2x" + "Crédito Master 3x" vem como 2 itens (`installments: 2` e `installments: 3`), não 1 item de 5x.
+Campos novos em cada item: `card_brand` (código da bandeira da NF-e: 1 Visa, 2 Mastercard, 3 Amex, 6 Elo, 7 Hipercard...) e `card_brand_name` (`"Mastercard"`), `null` fora de cartão.
+`order.installments` continua sendo o total de parcelas do pedido (2x + 3x = 5).
+`payment_method_matches_receipt` agora também confere parcelas e bandeira de cada comprovante.

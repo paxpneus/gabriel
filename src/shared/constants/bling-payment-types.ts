@@ -1,0 +1,23 @@
+// tipoPagamento das formas de pagamento da Bling (tabela da API v3) → nome pra exibir no erp_data do mapping.
+export const BLING_PAYMENT_TYPES: { code: number; name: string }[] = [
+  { code: 1, name: "Dinheiro" },
+  { code: 2, name: "Cheque" },
+  { code: 3, name: "Cartão de Crédito" },
+  { code: 4, name: "Cartão de Débito" },
+  { code: 5, name: "Cartão da Loja" },
+  { code: 10, name: "Vale Alimentação" },
+  { code: 11, name: "Vale Refeição" },
+  { code: 12, name: "Vale Presente" },
+  { code: 13, name: "Vale Combustível" },
+  { code: 14, name: "Duplicata Mercantil" },
+  { code: 15, name: "Boleto Bancário" },
+  { code: 16, name: "Depósito Bancário" },
+  { code: 17, name: "Pix Dinâmico" },
+  { code: 18, name: "Transferência Bancária / Carteira Digital" },
+  { code: 19, name: "Programa de Fidelidade / Cashback" },
+  { code: 20, name: "Pix Estático" },
+  { code: 21, name: "Crédito em Loja" },
+  { code: 22, name: "Pagamento Eletrônico Não Informado" },
+  { code: 90, name: "Sem Pagamento" },
+  { code: 99, name: "Outros" },
+];

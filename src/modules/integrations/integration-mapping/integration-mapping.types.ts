@@ -1,4 +1,5 @@
-export const ENTITY_TYPES = ["PRODUCT", "INVOICE", "CONTACT"] as const;
+// PAYMENT_METHOD: forma de pagamento da integração (Bling formaPagamento.id) → payment_methods.
+export const ENTITY_TYPES = ["PRODUCT", "INVOICE", "CONTACT", "PAYMENT_METHOD"] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export interface IntegrationMappingAttributes {
@@ -10,7 +11,7 @@ export interface IntegrationMappingAttributes {
   // Principal da entidade nessa integração: só ele grava dados no sync; o não principal só resolve a entidade.
   is_primary?: boolean;
   // Snapshot só-leitura do que o ERP mandou pra esse external_id (helper por integração) — nunca usado em resolução.
-  erp_data?: ProductErpData | null;
+  erp_data?: ProductErpData | PaymentMethodErpData | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -30,6 +31,19 @@ export interface ProductErpData {
   ean_package?: string | null;
   stock?: number | null;
   stocks?: Array<{ branch_id: number; unit_business_id: string | null; unit_business_name?: string | null; quantity: number }>;
+  updated_at: string;
+}
+
+// Snapshot da forma de pagamento na integração (Bling /formas-pagamentos). installments/card_brand só vêm do
+// detalhe da forma (importação de pedido); o populate lista sem eles e mantém o que já estava.
+// *_name: nome pra exibir já resolvido no back (front não mapeia código).
+export interface PaymentMethodErpData {
+  name: string | null;
+  type?: number | null;
+  type_name?: string | null;
+  installments?: number | null;
+  card_brand?: number | null;
+  card_brand_name?: string | null;
   updated_at: string;
 }
 

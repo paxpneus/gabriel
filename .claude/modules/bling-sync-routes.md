@@ -7,12 +7,13 @@ Versão HTTP dos scripts `src/scripts/bling/populate-from-bling-choose.ts` / `po
 - Rota sem model e fora de `EXCLUDED_ROUTES` → `resolveEntityFromRoute` devolve null → nenhuma checagem de permissão por entidade.
 
 ## Rotas
-- `POST /populate` — body `{ entities: ("products"|"invoices"|"orders")[], invoiceTypes?: ("nfe_out"|"nfe_in"|"nfe_cancelled"|"nfce")[], orderStatus?: string[], limit?: number }`. `invoiceTypes` omitido = os 4. `limit` = máximo **por etapa** (cada tipo de nota conta separado). Responde 202 e roda em background.
+- `POST /populate` — body `{ entities: ("payment_methods"|"products"|"invoices"|"orders")[], invoiceTypes?: ("nfe_out"|"nfe_in"|"nfe_cancelled"|"nfce")[], orderStatus?: string[], limit?: number }`. `invoiceTypes` omitido = os 4. `limit` = máximo **por etapa** (cada tipo de nota conta separado). Responde 202 e roda em background.
 - `GET /populate/status` — última execução (`PopulateRun`, Redis `bling-sync:populate:run`, TTL 7d).
 - Import por id/número/nome não fica aqui: ver `.claude/modules/manual-import.md` (`/api/manual-import`). `toBlingParams`/listagem paginada (`fetchBlingListPage`, `paginateBling`)/payload de `BLING_API_FETCH` ficam em `bling-sync/helpers/bling-list.ts`, compartilhados com ele e com o poll temporário (`.claude/modules/bling-poll.md`).
 
 ## Execução do populate
-- Ordem fixa: produtos → nfe_out → nfe_in → nfe_cancelled → nfce → pedidos (item de nota resolve produto já persistido).
+- Ordem fixa: formas de pagamento → produtos → nfe_out → nfe_in → nfe_cancelled → nfce → pedidos (item de nota resolve produto já persistido).
+- Formas de pagamento: sem fila — pagina `/formas-pagamentos` e passa cada página por `resolveBlingPaymentMethods` (mapping existente / auto-mapeia pelo tipo / pendência em `unmapped_entities`, ver `.claude/entities/order/index.md`). `enqueued` no resultado = formas processadas.
 - Pedidos: `orderStatus` = `normalized_status` (ex.: `EM_ABERTO`), traduzido pra `idsSituacoes[]` via `integrationOrderStatusMappingService.findExternalStatusIdsByNormalizedStatus` escopado na integração Bling; nenhum mapeado → 400 antes do lock. Omitido = todas as situações. Enfileira em `BlingOrderQueue` com `BULK_FORCE_UPDATE_PRIORITY` e jobId do force-update.
 - Enfileira em `BlingApiFetchQueue` (instância de `app.locals`), mesmos jobIds do script (`migration-...`) → dedup contra execução do script.
 - Entre etapas espera só os jobIds da própria execução sumirem do pending (`getPendingJobIds`) — não espera a fila zerar (webhook nunca deixaria).

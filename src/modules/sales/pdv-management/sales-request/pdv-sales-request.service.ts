@@ -1108,10 +1108,20 @@ export class PdvSalesRequestService extends BaseService<
     // pro match de valor total.
     const order = await orderService.findByIdWithPayments(orderId);
 
-    const orderPaymentMethods = ((order as any)?.payments ?? []).map(
-      (payment: any) => ({
+    // Pagamentos já agrupados (forma + parcelas + bandeira): cada comprovante
+    // corresponde a um pagamento, não a uma parcela.
+    const orderPayments = (order as any)?.payments ?? [];
+    // Pedido importado antes da m339 não tem parcelas da Bling: a contagem
+    // juntaria 2x+3x em 5, então parcelas não entram no match.
+    const hasInstallmentData = orderPayments.some(
+      (payment: any) => payment.installments != null,
+    );
+    const orderPaymentMethods = toPaymentsView(orderPayments).map(
+      (payment) => ({
         id: payment.paymentMethod?.id ?? null,
         description: payment.paymentMethod?.description ?? null,
+        installments: hasInstallmentData ? payment.installments : null,
+        card_brand: payment.card_brand,
       }),
     );
     const matchesReceipt = paymentMethodsMatchReceipts(
@@ -1119,6 +1129,8 @@ export class PdvSalesRequestService extends BaseService<
       receipts.map((r) => ({
         type: r.analysis?.tipo_comprovante ?? null,
         paymentMethodId: r.analysis?.payment_method?.id ?? null,
+        installments: r.analysis?.qtd_parcelas ?? null,
+        cardBrand: r.analysis?.bandeira_cartao ?? null,
       })),
     );
 

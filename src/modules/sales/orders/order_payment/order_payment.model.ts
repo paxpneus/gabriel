@@ -18,6 +18,8 @@ class OrderPayment
   public due_date!: string | null;
   public notes!: string | null;
   public form_description!: string | null;
+  public installments!: number | null;
+  public card_brand!: number | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -66,6 +68,16 @@ OrderPayment.init(
     },
     form_description: {
       type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    // Parcelas da forma na Bling (condicao "2x" → 2); null em pedido importado antes da coluna.
+    installments: {
+      type: DataTypes.SMALLINT,
+      allowNull: true,
+    },
+    // Código de bandeira da NF-e (CARD_BRANDS em shared/constants/card-brands.ts); null fora de cartão.
+    card_brand: {
+      type: DataTypes.SMALLINT,
       allowNull: true,
     },
   },

@@ -28,6 +28,7 @@ import {
   mapBlingInvoiceStatus,
   paginateBling,
 } from "./helpers/bling-list";
+import { resolveBlingPaymentMethods } from "../bling/helpers/payment-method";
 
 const POPULATE_LOCK_KEY = "bling-sync:populate:lock";
 const POPULATE_RUN_KEY = "bling-sync:populate:run";
@@ -35,6 +36,12 @@ const POPULATE_RUN_KEY = "bling-sync:populate:run";
 const POPULATE_LOCK_TTL_MS = 30 * 60 * 1000;
 const POPULATE_RUN_TTL_S = 7 * 24 * 3600;
 const QUEUE_POLL_MS = 5_000;
+
+interface BlingPaymentFormSummary {
+  id: number;
+  descricao?: string;
+  tipoPagamento?: number;
+}
 
 interface BlingInvoiceSummary {
   id: number;
@@ -142,9 +149,13 @@ export class BlingSyncService {
     return redisService.get<PopulateRun>(POPULATE_RUN_KEY);
   }
 
-  // Produtos sempre antes das notas: item de nota resolve produto já persistido.
+  // Formas de pagamento primeiro (pedido já acha o mapping); produtos antes das
+  // notas: item de nota resolve produto já persistido.
   private resolveSteps(request: PopulateRequest): PopulateStep[] {
     const steps: PopulateStep[] = [];
+    if (request.entities.includes("payment_methods")) {
+      steps.push("payment_methods");
+    }
     if (request.entities.includes("products")) steps.push("products");
     if (request.entities.includes("invoices")) {
       const chosen = request.invoiceTypes ?? INVOICE_STEPS;
@@ -184,16 +195,24 @@ export class BlingSyncService {
         run.currentStep = step;
         await this.saveRun(run);
 
-        const result =
-          step === "products"
-            ? await this.populateProducts(run.limit, queues.apiFetchQueue)
-            : step === "orders"
-              ? await this.populateOrders(
-                  run.limit,
-                  run.orderSituationIds,
-                  queues.orderQueue,
-                )
-              : await this.populateInvoices(step, run.limit, queues.apiFetchQueue);
+        let result: PopulateStepResult;
+        if (step === "payment_methods") {
+          result = await this.populatePaymentMethods(run.limit);
+        } else if (step === "products") {
+          result = await this.populateProducts(run.limit, queues.apiFetchQueue);
+        } else if (step === "orders") {
+          result = await this.populateOrders(
+            run.limit,
+            run.orderSituationIds,
+            queues.orderQueue,
+          );
+        } else {
+          result = await this.populateInvoices(
+            step,
+            run.limit,
+            queues.apiFetchQueue,
+          );
+        }
 
         run.results.push({ ...result, finishedAt: new Date().toISOString() });
         await this.saveRun(run);
@@ -210,6 +229,34 @@ export class BlingSyncService {
       await this.saveRun(run).catch(() => {});
       await this.releaseLock(run.runId).catch(() => {});
     }
+  }
+
+  // Sem fila: lista /formas-pagamentos e resolve página a página (mapping já
+  // existente, auto-mapeado pelo tipo ou pendência). enqueued = formas processadas.
+  private async populatePaymentMethods(
+    limit: number | null,
+  ): Promise<PopulateStepResult> {
+    const integration = await getBlingIntegration();
+    let processed = 0;
+
+    for await (const page of paginateBling<BlingPaymentFormSummary>(
+      "/formas-pagamentos",
+    )) {
+      const batch = limit ? page.slice(0, limit - processed) : page;
+      await resolveBlingPaymentMethods(
+        batch.map((form) => ({
+          id: form.id,
+          type: form.tipoPagamento ?? null,
+          description: form.descricao || null,
+        })),
+        integration.id,
+      );
+      processed += batch.length;
+      console.log(`[BlingSync] Formas de pagamento processadas: ${processed}`);
+      if (limit && processed >= limit) break;
+    }
+
+    return { step: "payment_methods", enqueued: processed, skipped: 0 };
   }
 
   private async populateProducts(

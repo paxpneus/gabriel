@@ -9,19 +9,32 @@ export class PaymentMethodController extends RouterController {
   constructor() {
     super();
     this.router.get("/", ...this.mw("index"), this.index);
+    this.router.get("/card-brands", ...this.mw("cardBrands"), this.cardBrands);
+    this.router.get("/installments", ...this.mw("installments"), this.installments);
   }
 
   protected middlewaresFor(): Record<string, RequestHandler[]> {
+    const pdvScreens = pdvAccess([
+      PdvAccessScreen.STORE_REQUEST,
+      PdvAccessScreen.FINANCE,
+      PdvAccessScreen.CD21,
+    ]);
     return {
-      index: [
-        pdvAccess([
-          PdvAccessScreen.STORE_REQUEST,
-          PdvAccessScreen.FINANCE,
-          PdvAccessScreen.CD21,
-        ]),
-      ],
+      index: [pdvScreens],
+      cardBrands: [pdvScreens],
+      installments: [pdvScreens],
     };
   }
+
+  // GET /card-brands — bandeiras de cartão (código NF-e + nome), lista fixa sem paginação.
+  cardBrands = async (_req: Request, res: Response): Promise<Response> => {
+    return res.json({ data: paymentMethodService.listCardBrands() });
+  };
+
+  // GET /installments — opções de parcelas (1x até MAX_INSTALLMENTS), lista fixa sem paginação.
+  installments = async (_req: Request, res: Response): Promise<Response> => {
+    return res.json({ data: paymentMethodService.listInstallmentOptions() });
+  };
 
   index = async (req: Request, res: Response): Promise<Response> => {
     try {

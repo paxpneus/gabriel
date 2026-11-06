@@ -37,9 +37,8 @@ import productService from "../../../../inventory/products/services/product.serv
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 import { OrderPaymentCreationAttributes } from "../../../../sales/orders/order_payment/order_payment.types";
-import { paymentMethodGroupForBlingType } from "../../../../sales/orders/payment_method/helpers/payment-method-groups";
+import { resolveBlingPaymentMethods } from "../bling/helpers/payment-method";
 import orderPaymentService from "../../../../sales/orders/order_payment/order_payment.service";
-import paymentMethodService from "../../../../sales/orders/payment_method/payment_method.service";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { isPdvCancelledSituation } from "../../../../sales/orders/order/helpers/eligible-for-pdv-filters";
 import { notifyPdvStoreSync } from "../../../../sales/pdv-management/sales-request/helpers/notify-pdv-store-sync";
@@ -59,13 +58,37 @@ interface BlingPaymentMethodApi {
   id: number;
   descricao: string;
   tipoPagamento?: number;
+  condicao?: string;
+  dadosCartao?: { bandeira?: number };
 }
 
-// formaPagamento.id (Bling) -> tipo e nome da forma; o tipo de uma forma não muda.
+// formaPagamento.id (Bling) -> tipo, nome, parcelas e bandeira da forma (não mudam).
 const blingFormById = new Map<
   string,
-  { type: number | null; description: string | null }
+  {
+    type: number | null;
+    description: string | null;
+    installments: number | null;
+    cardBrand: number | null;
+  }
 >();
+
+// condicao da forma na Bling: "2x" → 2, lista de dias "30 60 90" → 3, vazio → à vista (1).
+// Formato desconhecido vira null (não chuta).
+function installmentsFromBlingCondition(
+  condition: string | null | undefined,
+): number | null {
+  const trimmed = (condition ?? "").trim();
+  if (!trimmed) return 1;
+
+  const times = trimmed.match(/^(\d+)\s*x$/i);
+  if (times) return Math.max(Number(times[1]), 1);
+
+  if (/^\d+([\s,;/]+\d+)*$/.test(trimmed)) {
+    return trimmed.split(/[\s,;/]+/).length;
+  }
+  return null;
+}
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
@@ -281,47 +304,25 @@ export class BlingOrderService {
     }
   }
 
-  // Forma da Bling -> linha agrupada por tipoPagamento em payment_methods
-  // (ver payment-method-groups.ts). Tipo/nome de cada forma ficam em cache de
+  // Dados da forma na Bling (tipo, nome, parcelas, bandeira) em cache de
   // memória — evita bater em /formas-pagamentos/{id} a cada pedido, já que o
   // rate-limit da Bling é compartilhado entre todas as filas.
-  private async resolvePaymentMethod(
-    formaPagamentoId: number | string,
-  ): Promise<{ paymentMethodId: string; formDescription: string | null }> {
-    const formId = String(formaPagamentoId);
+  private async fetchBlingPaymentForm(formId: string) {
+    const cached = blingFormById.get(formId);
+    if (cached) return cached;
 
-    let form = blingFormById.get(formId);
-    if (!form) {
-      const { data } = await blingGet<{ data: BlingPaymentMethodApi }>(
-        `/formas-pagamentos/${formId}`,
-        this.blingApi,
-      );
-      form = {
-        type: data.data.tipoPagamento ?? null,
-        description: data.data.descricao || null,
-      };
-      blingFormById.set(formId, form);
-    }
-
-    const group = paymentMethodGroupForBlingType(form.type);
-    const existing = await paymentMethodService.findOne({
-      where: { id_system: group.key },
-      attributes: ["id"],
-    });
-    if (existing) {
-      return { paymentMethodId: existing.id, formDescription: form.description };
-    }
-
-    const integration = await getBlingIntegration();
-    const created = await paymentMethodService.create({
-      integrations_id: integration.id,
-      id_system: group.key,
-      description: group.description,
-      payment_type: Number(group.key),
-      raw_payload: { blingTypes: group.blingTypes },
-    });
-
-    return { paymentMethodId: created.id, formDescription: form.description };
+    const { data } = await blingGet<{ data: BlingPaymentMethodApi }>(
+      `/formas-pagamentos/${formId}`,
+      this.blingApi,
+    );
+    const form = {
+      type: data.data.tipoPagamento ?? null,
+      description: data.data.descricao || null,
+      installments: installmentsFromBlingCondition(data.data.condicao),
+      cardBrand: data.data.dadosCartao?.bandeira || null,
+    };
+    blingFormById.set(formId, form);
+    return form;
   }
 
   // Uma linha por parcela da Bling (parcelas[]) — um pedido pode ter várias
@@ -334,24 +335,40 @@ export class BlingOrderService {
     const installments = (parcelas ?? []).filter(
       (parcela) => parcela.formaPagamento?.id,
     );
+    if (!installments.length) return [];
 
-    const uniqueMethodIds = [
+    const uniqueFormIds = [
       ...new Set(
         installments.map((parcela) => String(parcela.formaPagamento!.id)),
       ),
     ];
-    const resolved = await Promise.all(
-      uniqueMethodIds.map(
-        async (id) => [id, await this.resolvePaymentMethod(id)] as const,
+    const forms = new Map(
+      await Promise.all(
+        uniqueFormIds.map(
+          async (id) => [id, await this.fetchBlingPaymentForm(id)] as const,
+        ),
       ),
     );
-    const resolvedByFormId = new Map(resolved);
+    const integration = await getBlingIntegration();
+    const paymentMethodIdByForm = await resolveBlingPaymentMethods(
+      [...forms].map(([id, form]) => ({
+        id,
+        type: form.type,
+        description: form.description,
+        installments: form.installments,
+        cardBrand: form.cardBrand,
+      })),
+      integration.id,
+    );
 
     return installments.map((parcela) => {
-      const form = resolvedByFormId.get(String(parcela.formaPagamento!.id))!;
+      const formId = String(parcela.formaPagamento!.id);
+      const form = forms.get(formId)!;
       return {
-        payment_method_id: form.paymentMethodId,
-        form_description: form.formDescription,
+        payment_method_id: paymentMethodIdByForm.get(formId)!,
+        form_description: form.description,
+        installments: form.installments,
+        card_brand: form.cardBrand,
         id_system: parcela.id != null ? String(parcela.id) : null,
         amount: Number(parcela.valor ?? 0),
         due_date:
