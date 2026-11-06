@@ -231,6 +231,17 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
           },
         ],
       },
+      // Só libera menu/rota do front; a tela (loja) quem decide é o backend pela loja atual do usuário.
+      {
+        module: "sales",
+        label: "Vendas",
+        permissions: [
+          {
+            id: "pdv_sales_request_store",
+            label: "PDV — Solicitação Loja",
+          },
+        ],
+      },
     ],
   },
 
@@ -247,6 +258,17 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
           {
             id: "seller-report",
             label: "Relatório de Vendedor - Visão Vendedor",
+          },
+        ],
+      },
+      // Só libera menu/rota do front; a tela (loja) quem decide é o backend pela loja atual do usuário.
+      {
+        module: "sales",
+        label: "Vendas",
+        permissions: [
+          {
+            id: "pdv_sales_request_store",
+            label: "PDV — Solicitação Loja",
           },
         ],
       },

@@ -3212,6 +3212,32 @@ export class PdvSalesRequestService extends BaseService<
     );
   }
 
+  // Total do pedido mudou na Bling: refaz comprovante x pedido das solicitações com comprovante analisado,
+  // senão o aviso de valor fica preso no total antigo (só reconcileReceipts recalculava).
+  async syncReceiptTotalFromOrder(
+    orderId: string,
+    orderTotal: number | null,
+  ): Promise<void> {
+    const requests = await this.findAll({
+      where: { order_id: orderId, payment_receipt_analysis: { [Op.ne]: null } },
+      attributes: ["id", "unit_business_id", "status", "payment_receipt_analysis"],
+    });
+    if (!requests.length) return;
+
+    await Promise.all(
+      requests.map((request) => {
+        const receiptTotal = request.payment_receipt_analysis?.valor_total ?? null;
+        return this.repository.update(request.id, {
+          receipt_total_matches_order: receiptTotalMatchesOrder(receiptTotal, orderTotal),
+          receipt_total_difference: receiptTotalDifference(receiptTotal, orderTotal),
+        });
+      }),
+    );
+
+    requests.forEach((request) => notifySalesRequestUpdated(request.id));
+    notifyPdvStoresSync(requests, "SALES_REQUEST_STATUS_CHANGED");
+  }
+
   // Pra quem muda dado exibido na solicitação fora deste service (lote/romaneio do CD21, import da Tecinco).
   async notifyChanged(id: string): Promise<void> {
     try {

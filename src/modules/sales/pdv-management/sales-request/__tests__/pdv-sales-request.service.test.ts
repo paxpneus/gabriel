@@ -1517,6 +1517,48 @@ describe("PdvSalesRequestService", () => {
     });
   });
 
+  // Total do pedido mudou na Bling: o aviso de valor comprovante x pedido tem que seguir o total novo.
+  describe("syncReceiptTotalFromOrder", () => {
+    it("refaz match/diferença de cada solicitação com comprovante analisado e notifica", async () => {
+      (pdvSalesRequestRepository.findAll as jest.Mock).mockResolvedValue([
+        {
+          id: "r1",
+          unit_business_id: "ub1",
+          status: PdvSalesRequestStatus.OPEN,
+          payment_receipt_analysis: { valor_total: 1249 },
+        },
+      ]);
+
+      await service.syncReceiptTotalFromOrder("o1", 577.8);
+
+      expect(pdvSalesRequestRepository.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { order_id: "o1", payment_receipt_analysis: { [Op.ne]: null } },
+        }),
+        undefined,
+        undefined,
+      );
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        receipt_total_matches_order: false,
+        receipt_total_difference: 671.2,
+      });
+      expect(notifySalesRequestUpdated).toHaveBeenCalledWith("r1");
+      expect(notifyPdvStoresSync).toHaveBeenCalledWith(
+        [expect.objectContaining({ id: "r1", unit_business_id: "ub1" })],
+        "SALES_REQUEST_STATUS_CHANGED",
+      );
+    });
+
+    it("pedido sem solicitação com comprovante não grava nem notifica", async () => {
+      (pdvSalesRequestRepository.findAll as jest.Mock).mockResolvedValue([]);
+
+      await service.syncReceiptTotalFromOrder("o1", 577.8);
+
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+      expect(notifyPdvStoresSync).not.toHaveBeenCalled();
+    });
+  });
+
   describe("attachReceipt", () => {
     it("cria uma linha de comprovante (nunca substitui as existentes) e NÃO avança status", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({

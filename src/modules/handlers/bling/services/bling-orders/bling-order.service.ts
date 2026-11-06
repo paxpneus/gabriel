@@ -1155,6 +1155,17 @@ export class BlingOrderService {
       };
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
+
+      // Total mudou na Bling (ou estava vazio): refaz o aviso de valor comprovante x pedido no PDV.
+      const previousNetTotal =
+        existingOrder.net_total_order == null ? null : Number(existingOrder.net_total_order);
+      if (previousNetTotal !== orderUpdateFields.net_total_order) {
+        await pdvSalesRequestService.syncReceiptTotalFromOrder(
+          existingOrder.id,
+          orderUpdateFields.net_total_order,
+        );
+      }
+
       await orderPaymentService.replaceForOrder(
         existingOrder.id,
         orderPayments.map((payment) => ({
@@ -1442,6 +1453,8 @@ export class BlingOrderService {
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
         total_order: Number(orderData.totalProdutos ?? 0),
+        // Mesmo campo do update: sem ele a solicitação PDV criada logo abaixo não compara comprovante x pedido.
+        net_total_order: Number(orderData.total ?? 0),
         discount_value: Number(orderData.desconto?.valor ?? 0),
         discount_type: orderData.desconto?.unidade
           ? String(orderData.desconto.unidade)

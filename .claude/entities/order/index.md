@@ -43,7 +43,7 @@ Meanwhile several queues (`cnpj.queue.ts`, `mercado-livre-sync.queue.ts`, `nfe.q
 
 Any *new* code that filters by `internal_status` must still display `internal_status`, not `actual_situation`/`status_snapshot`, for the same row, or it will self-contradict — e.g. `ship_to_define`'s detail endpoint (`summary-endpoints.md`) displays `internal_status` because its filter is by `internal_status`.
 
-**`net_total_order` (`m296`)** — total líquido do pedido (já com desconto), vindo de `total` do payload Bling (`total_order` vem de `totalProdutos`, bruto). Preenchido por `BlingOrderService` em todo sync, sem proteção/append-only — sobrescreve sempre. Uso só no PDV.
+**`net_total_order` (`m296`)** — total líquido do pedido (já com desconto), vindo de `total` do payload Bling (`total_order` vem de `totalProdutos`, bruto). Preenchido por `BlingOrderService` em todo sync, tanto na criação quanto na atualização, sem proteção/append-only — sobrescreve sempre. Uso só no PDV. Antes da correção, a criação não gravava o campo. Pedido criado e ainda não atualizado ficava com `null`, e `receiptTotalMatchesOrder` também devolvia `null`, então sem aviso de valor no PDV. Quando o total muda num update (comparação com `Number()`, porque o DECIMAL vem como string), `pdvSalesRequestService.syncReceiptTotalFromOrder` refaz o aviso de valor das solicitações do pedido.
 
 ## `GET /:id/sales-report` sem snapshot
 

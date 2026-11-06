@@ -63,6 +63,7 @@ jest.mock(
       cancelIfActiveByOrderId: jest.fn(),
       reactivateIfCancelledByOrder: jest.fn(),
       syncUnitBusinessFromOrder: jest.fn(),
+      syncReceiptTotalFromOrder: jest.fn(),
     },
   }),
 );
@@ -481,6 +482,45 @@ describe("BlingOrderService", () => {
       await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
 
       expect(pdvSalesRequestService.syncUnitBusinessFromOrder).not.toHaveBeenCalled();
+    });
+  });
+
+  // Aviso de valor comprovante x pedido do PDV só era recalculado ao mexer em comprovante.
+  describe("updateOrderFromBling — total do pedido (net_total_order) no PDV", () => {
+    it("total mudou na Bling refaz o aviso de valor das solicitações PDV com o total novo", async () => {
+      (ordersService.findOne as jest.Mock).mockResolvedValue(
+        makeExistingOrder({ net_total_order: "1500.00" }),
+      );
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(pdvSalesRequestService.syncReceiptTotalFromOrder).toHaveBeenCalledWith(
+        "order-uuid-1",
+        1933.57,
+      );
+    });
+
+    it("pedido sem total gravado (criado antes da correção) refaz o aviso ao receber o total", async () => {
+      (ordersService.findOne as jest.Mock).mockResolvedValue(
+        makeExistingOrder({ net_total_order: null }),
+      );
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(pdvSalesRequestService.syncReceiptTotalFromOrder).toHaveBeenCalledWith(
+        "order-uuid-1",
+        1933.57,
+      );
+    });
+
+    it("mesmo total (DECIMAL vem string do Postgres) não mexe no PDV", async () => {
+      (ordersService.findOne as jest.Mock).mockResolvedValue(
+        makeExistingOrder({ net_total_order: "1933.57" }),
+      );
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(pdvSalesRequestService.syncReceiptTotalFromOrder).not.toHaveBeenCalled();
     });
   });
 
