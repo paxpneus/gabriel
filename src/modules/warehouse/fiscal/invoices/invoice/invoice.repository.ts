@@ -25,6 +25,7 @@ import {
   WhereOptions,
 } from "sequelize";
 import ExpeditionBatchInvoice from "../../../expedition/batch-invoices/batch-invoices.model";
+import expeditionBatchInvoiceRepository from "../../../expedition/batch-invoices/batch-invoices.repository";
 import BatchInvoiceItems from "../../../expedition/batch-invoice-items/batch-invoice-items.model";
 import ExpeditionBatchItems from "../../../expedition/batch-items/batch-items.model";
 import ExpeditionBatch from "../../../expedition/batch/batch.model";
@@ -1144,7 +1145,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     return this.findCancellationTarget({ id: invoiceId });
   }
 
-  // Status de cada unit business + status do lote, pra saber se ainda dá pra tirar a nota dele.
+  // Status de cada unit business + vínculos em lote aberto (todos: a nota pode estar em lotes de várias lojas/tipos).
   private async findCancellationTarget(
     where: WhereOptions,
     attrWhere?: WhereOptions,
@@ -1160,15 +1161,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           ...(attrWhere && { where: attrWhere }),
           attributes: ["status"],
         },
-        {
-          model: ExpeditionBatchInvoice,
-          as: "batchInvoice",
-          required: false,
-          attributes: ["id"],
-          include: [
-            { model: ExpeditionBatch, as: "batch", attributes: ["status"] },
-          ],
-        },
       ],
     });
     if (!data) return null;
@@ -1179,8 +1171,8 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       number_system: plain.number_system,
       return_invoice_reference: plain.return_invoice_reference ?? null,
       statuses: plain.unitBusinessAttributes.map((attr: any) => attr.status),
-      batchInvoiceId: plain.batchInvoice?.id ?? null,
-      batchStatus: plain.batchInvoice?.batch?.status ?? null,
+      openBatchInvoiceIds:
+        await expeditionBatchInvoiceRepository.findOpenIdsByInvoiceId(plain.id),
     };
   }
 

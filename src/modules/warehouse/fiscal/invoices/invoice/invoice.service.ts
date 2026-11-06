@@ -42,7 +42,6 @@ import supplierDiscountRuleService from "../../../../inventory/supplier-discount
 import { SupplierDiscountBypassItemInput } from "../../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import sequelize from "../../../../../config/sequelize";
 import batchInvoicesService from "../../../expedition/batch-invoices/batch-invoices.service";
-import { CLOSED_EXPEDITION_BATCH_STATUSES } from "../../../expedition/batch/batch.types";
 import { normalizeInvoiceNumber } from "./helpers/reference-description";
 import {
   extractTransferReferenceNumber,
@@ -1212,7 +1211,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
     const alreadyCancelled =
       target.statuses.every((status) => status === "CANCELLED") &&
-      !this.isInOpenBatch(target);
+      !target.openBatchInvoiceIds.length;
     if (alreadyCancelled) return;
 
     await sequelize.transaction((t) =>
@@ -1220,23 +1219,18 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     );
   }
 
-  private isInOpenBatch(target: InvoiceCancellationTarget): boolean {
-    return (
-      !!target.batchInvoiceId &&
-      !CLOSED_EXPEDITION_BATCH_STATUSES.includes(target.batchStatus ?? "")
-    );
-  }
-
-  // Lote fechado (já expedido) mantém a nota; aberto tira, antes do CANCELLED (removeBatchInvoice volta pra OPEN).
+  // Lote fechado (já expedido) mantém a nota; de TODO lote aberto ela sai, antes do CANCELLED (removeBatchInvoice volta pra OPEN).
   private async applyCancellation(
     target: InvoiceCancellationTarget,
     data: Partial<InvoiceAttributes>,
     attrWhere: WhereOptions | undefined,
     t: Transaction,
   ): Promise<void> {
-    if (this.isInOpenBatch(target)) {
-      await batchInvoicesService.removeBatchInvoice(target.batchInvoiceId!, t);
-    }
+    await Promise.all(
+      target.openBatchInvoiceIds.map((id) =>
+        batchInvoicesService.removeBatchInvoice(id, t),
+      ),
+    );
 
     await this.repository.updateWithAttributesForAllUnits(
       [target.id],

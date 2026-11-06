@@ -2,6 +2,7 @@ import { Op } from 'sequelize';
 import BaseRepository from '../../../../shared/utils/base-models/base-repository';
 import ExpeditionBatch from '../batch/batch.model';
 import ExpeditionBatchInvoice from './batch-invoices.model';
+import { CLOSED_EXPEDITION_BATCH_STATUSES } from '../batch/batch.types';
 
 export class ExpeditionBatchInvoiceRepository extends BaseRepository<ExpeditionBatchInvoice> {
   constructor() {
@@ -49,6 +50,24 @@ export class ExpeditionBatchInvoiceRepository extends BaseRepository<ExpeditionB
       ],
     });
     return new Map(rows.map((row) => [row.invoice_id, row.expedition_batch_id]));
+  }
+
+  // Vínculos da nota em lotes ainda abertos, de qualquer loja/tipo — o cancelamento tira a nota de todos.
+  async findOpenIdsByInvoiceId(invoiceId: string): Promise<string[]> {
+    const rows = await ExpeditionBatchInvoice.findAll({
+      where: { invoice_id: invoiceId },
+      attributes: ['id'],
+      include: [
+        {
+          model: ExpeditionBatch,
+          as: 'batch',
+          required: true,
+          attributes: [],
+          where: { status: { [Op.notIn]: [...CLOSED_EXPEDITION_BATCH_STATUSES] } },
+        },
+      ],
+    });
+    return rows.map((row) => row.id);
   }
 }
 
