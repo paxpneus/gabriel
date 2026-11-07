@@ -40,6 +40,7 @@ import {
 } from "sequelize";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
+import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import { endOfDayTz, startOfDayTz } from "../../../../shared/utils/normalizers/date";
 import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
 import invoiceItemsService from "../../fiscal/invoices/invoice-items/invoice-items.service";
@@ -662,6 +663,76 @@ export class ExpeditionBatchService extends BaseService<
     });
 
     return (await this.repository.getFullBatch(batchId!)) as ExpeditionBatch;
+  }
+
+  // QR do romaneio (id do lote de expedição de outra loja): gera o lote desta loja com as notas dele.
+  // requestedType (tela escolheu entrada/expedição) é respeitado — expedição sem entrada finalizada dá erro, nunca vira entrada.
+  // Sem ele, tipo por nota: emissora → expedição; destinatária → entrada; transbordo → entrada, ou expedição se já tem lote de entrada aqui.
+  async generateBatchFromQrCode(
+    sourceBatchId: string,
+    unitBusinessId: string,
+    requestedType?: BatchType,
+    mode?: string,
+    blingCheckJobId?: string,
+  ): Promise<ExpeditionBatch> {
+    const sourceBatch = await this.findById(sourceBatchId, {
+      attributes: ["id", "type", "unit_business_id"],
+    });
+    if (!sourceBatch || sourceBatch.type !== "OUTGOING") {
+      throw new Error("O QR lido não é de um romaneio de expedição.");
+    }
+    if (sourceBatch.unit_business_id === unitBusinessId) {
+      throw new Error("Este romaneio é desta própria loja.");
+    }
+
+    const sourceBatchInvoices = await batchInvoicesService.findAll({
+      where: { expedition_batch_id: sourceBatchId },
+      attributes: ["invoice_id"],
+    });
+    const invoiceIds = sourceBatchInvoices.map((bi) => bi.invoice_id);
+    if (!invoiceIds.length) {
+      throw new Error("O romaneio lido não tem notas.");
+    }
+
+    // Tipo pedido: as travas do generateBatchFromInvoices (assertTransshipment) barram expedição sem entrada finalizada.
+    if (requestedType) {
+      return this.generateBatchFromInvoices(invoiceIds, unitBusinessId, requestedType, mode, blingCheckJobId);
+    }
+
+    const [unitBusiness, invoices, incomingBatchIdByInvoiceId] = await Promise.all([
+      unitBusinessService.findById(unitBusinessId, {
+        attributes: ["id", "cnpj", "transshipment_allowed"],
+      }),
+      invoiceService.findAll({
+        where: { id: invoiceIds },
+        attributes: ["id", "number_system", "sender_cnpj", "receiver_cnpj"],
+      }),
+      batchInvoicesService.findBatchIdsByInvoiceIds(invoiceIds, unitBusinessId, "INCOMING"),
+    ]);
+    if (!unitBusiness) throw new Error("Loja não encontrada.");
+
+    // Nota de transbordo em loja sem transbordo cai em entrada e o assertTransshipment barra com a mensagem de sempre.
+    const unitCnpj = cleanDocument(unitBusiness.cnpj);
+    const invoiceNumbersByType: Record<BatchType, string[]> = { INCOMING: [], OUTGOING: [] };
+    for (const invoice of invoices) {
+      let type: BatchType = "INCOMING";
+      if (isTransshipmentInvoice(invoice, unitBusiness.cnpj)) {
+        if (incomingBatchIdByInvoiceId.has(invoice.id)) type = "OUTGOING";
+      } else if (cleanDocument(invoice.sender_cnpj ?? "") === unitCnpj) {
+        type = "OUTGOING";
+      }
+      invoiceNumbersByType[type].push(invoice.number_system ?? invoice.id);
+    }
+
+    // Um lote tem um type só.
+    if (invoiceNumbersByType.INCOMING.length && invoiceNumbersByType.OUTGOING.length) {
+      throw new Error(
+        `As notas do romaneio não são do mesmo tipo de lote nesta loja: entrada ${invoiceNumbersByType.INCOMING.join(", ")}; expedição ${invoiceNumbersByType.OUTGOING.join(", ")}.`,
+      );
+    }
+    const type: BatchType = invoiceNumbersByType.OUTGOING.length ? "OUTGOING" : "INCOMING";
+
+    return this.generateBatchFromInvoices(invoiceIds, unitBusinessId, type, mode, blingCheckJobId);
   }
 
 async addInvoiceToBatch(
@@ -1538,6 +1609,8 @@ async addInvoiceToLastOutgoingBatch(
   ): Promise<PaginatedResult<ExpeditionBatch>> {
     return super.paginate(params, {
       ...extraOptions,
+      // has_transshipment: selo "Transbordo" nas listagens de lote de entrada e de expedição.
+      attributes: { include: [this.repository.hasTransshipmentAttribute()] },
       include: [
         {
           model: UnitBusiness,

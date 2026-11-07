@@ -4,7 +4,7 @@ Loja com `unit_businesses.transshipment_allowed` (CD) monta lote de nota da qual
 
 ## Marca por nota no lote
 - `expedition_batch_invoices.is_transshipment` (BOOLEAN NOT NULL default false, `m341`). Gravada em `batchInvoicesService.createBatchInvoiceWithItems(batchId, invoices, t, transshipmentInvoiceIds)`, com os ids que `assertTransshipment` devolveu `true` em `generateBatchFromInvoices`/`addInvoiceToBatch` (os dois ramos).
-- Fonte única de "essa nota é transbordo neste lote". É a base da comparação futura: saída da emissora × entrada no CD × saída do CD × entrada na destinatária.
+- Fonte única de "essa nota é transbordo neste lote". Listagem `GET /api/batch` (`ExpeditionBatchService.paginate`) traz `has_transshipment` por lote (`EXISTS` em `expedition_batch_invoices.is_transshipment`, `batch.repository.ts::hasTransshipmentAttribute`). É a base da comparação futura: saída da emissora × entrada no CD × saída do CD × entrada na destinatária.
 
 ## Linhas de atributo (`invoice_unit_business_attributes`)
 - Unique `(invoice_id, unit_business_id, type)` (`m341`, antes era sem `type`). A loja de transbordo tem **2 linhas** por nota (INCOMING e OUTGOING), com `status`/`batch_generated` independentes. Emissora e destinatária continuam com **1 linha**, a da ingestão.
@@ -33,5 +33,12 @@ O hasOne devolve **um vínculo qualquer** quando a nota tem vários (emissora, C
 ## Relatório de operação diária
 Snapshot por `(invoice_id, unit_business_id, type)` + `is_transshipment`; no fato do dia o transbordo fica fora dos indicadores normais e conta em `transshipment_incoming_count`/`transshipment_outgoing_count`. Detalhes em `../../modules/reports.md` (`daily-operation/`).
 
-## Pendente
-- Rota do QR do romaneio (`POST /api/batch/from-qr-code`, body `{ batchId }` do lote de expedição): `type` resolvido por nota (emissora → expedição, destinatária → entrada, transbordo → entrada se ainda não tem lote de entrada na loja, senão expedição).
+## Rota do QR do romaneio — `POST /api/batch/from-qr-code`
+- `[authenticate, userPermissions]`. Body `{ batchId, type?, mode?, blingCheckJobId? }`; `batchId` = o QR do romaneio (id do lote de **expedição** que gerou o romaneio — da emissora, ou do CD na saída do transbordo). Loja = a do usuário logado (`getUserContext`). 201 com o lote; erro → 400 (`batchId` inválido → `"QR do romaneio inválido"`).
+- `ExpeditionBatchService.generateBatchFromQrCode(sourceBatchId, unitBusinessId, requestedType?, mode?, blingCheckJobId?)`: lote de origem precisa ser `OUTGOING` (senão `"O QR lido não é de um romaneio de expedição."`) e de outra loja (`"Este romaneio é desta própria loja."`); sem notas → `"O romaneio lido não tem notas."`.
+- `type` do body (`INCOMING`/`OUTGOING`, opcional; outro valor → 400): quando vem, é usado direto em `generateBatchFromInvoices` — expedição de nota de transbordo sem entrada finalizada dá o erro do `assertTransshipment`, nunca vira entrada. Sem ele, `type` por nota: loja emissora → `OUTGOING`; destinatária → `INCOMING`; transbordo → `INCOMING` se a nota ainda não tem lote de entrada nesta loja (`batchInvoicesService.findBatchIdsByInvoiceIds(ids, ub, "INCOMING")`, uma consulta só), senão `OUTGOING` (a trava de entrada finalizada do `assertTransshipment` continua valendo). Nota fora da loja sem `transshipment_allowed` cai em entrada e o `assertTransshipment` barra com `"Leitura bloqueada..."`.
+- Sem `type`, notas em tipos diferentes → `"As notas do romaneio não são do mesmo tipo de lote nesta loja: entrada <nºs>; expedição <nºs>."` (um lote tem um `type` só).
+- Depois só chama `generateBatchFromInvoices(ids, ub, type, mode, blingCheckJobId)`: todas as travas de sempre (não mapeado, conciliação Bling — o front chama `POST /bling-reconciliation-check` antes, PDV crítico) e a marca de transbordo por nota. Bipar de novo um QR já processado devolve o lote existente (notas já processadas).
+
+## Fase futura (não implementada)
+Comparar a quantidade conferida (`batch_invoice_items.quantity_read`) em cada etapa da nota: saída da emissora × entrada no CD × saída do CD × entrada na destinatária (`is_transshipment` identifica as etapas do CD).

@@ -80,6 +80,8 @@ function makeInvoice(overrides: Partial<any> = {}) {
   return {
     id: "invoice-1",
     sender_cnpj: "OUTRO-CNPJ",
+    // Loja é a destinatária por padrão; sem ela na nota é transbordo (não movimenta estoque).
+    receiver_cnpj: UNIT_BUSINESS_CNPJ,
     emitted_at: new Date("2026-01-10T00:00:00Z"),
     number_system: "123",
     unitBusinessAttributes: [
@@ -2179,6 +2181,23 @@ describe("StockMovementService", () => {
           ],
         }),
       ]);
+
+      const result = await service.findStockMovementSourceData(
+        UNIT_BUSINESS_ID,
+        PRODUCT_ID,
+      );
+
+      expect(result).toEqual([]);
+    });
+
+    it("nota de transbordo (loja nem emissora nem destinatária) não gera movimento", async () => {
+      (invoiceItemsService.findAll as jest.Mock).mockResolvedValue([
+        makeInvoiceItem(),
+      ]);
+      (Invoice.findAll as jest.Mock).mockResolvedValue([
+        makeInvoice({ sender_cnpj: "22222222000122", receiver_cnpj: "33333333000133" }),
+      ]);
+      (InvoiceFiscalItem.findAll as jest.Mock).mockResolvedValue([makeFiscalItem()]);
 
       const result = await service.findStockMovementSourceData(
         UNIT_BUSINESS_ID,

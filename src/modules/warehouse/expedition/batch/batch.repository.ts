@@ -170,6 +170,18 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
     ];
   }
 
+  // Atributo calculado `has_transshipment`: alguma nota do lote entrou como transbordo (selo nas listagens de lote).
+  hasTransshipmentAttribute(): [Literal, string] {
+    return [
+      literal(`EXISTS (
+        SELECT 1 FROM expedition_batch_invoices ebi
+        WHERE ebi.expedition_batch_id = "ExpeditionBatch"."id"
+          AND ebi.is_transshipment = TRUE
+      )`),
+      "has_transshipment",
+    ];
+  }
+
   normalizeBatchPlain(plain: any): ExpeditionBatchFull {
     return {
       ...plain,
