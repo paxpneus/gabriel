@@ -6,6 +6,23 @@ import {
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
 
+// O service importa o transshipment-resolver, que chega no uploaderQueue (Queue real); sem Redis (Docker) o erro de conexão
+// sai depois do fim dos testes e o Jest termina com código 1.
+jest.mock("../../../../../config/redis", () => ({
+  __esModule: true,
+  redisConfig: {},
+  redisClient: { get: jest.fn(), set: jest.fn(), del: jest.fn(), eval: jest.fn(), on: jest.fn() },
+}));
+
+jest.mock("bullmq", () => ({
+  __esModule: true,
+  Queue: jest.fn().mockImplementation(() => ({ add: jest.fn(), getJob: jest.fn() })),
+  QueueEvents: jest.fn().mockImplementation(() => ({})),
+  Worker: jest.fn().mockImplementation(() => ({ on: jest.fn() })),
+  DelayedError: class DelayedError extends Error {},
+  UnrecoverableError: class UnrecoverableError extends Error {},
+}));
+
 jest.mock(
   "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service",
   () => ({
