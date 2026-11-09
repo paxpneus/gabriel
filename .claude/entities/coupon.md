@@ -10,7 +10,7 @@
 
 ## Rotas
 - `/api/coupons`: CRUD (`CreateCouponSchema`/`UpdateCouponSchema`), `PATCH /:id/activate|deactivate`. Código duplicado → "Já existe um cupom com este código".
-- `/api/contact-coupons`: `POST /` = `link` (valida contato afiliado e cupom; dono ativo já existente → erro sugerindo transferência, inclusive na corrida via `UniqueConstraintError`), `PUT /:id` só `commission_rate` (vale só pros próximos pedidos), `POST /transfer` (inativa o dono atual + `link`, mesma transação), `PATCH /:id/deactivate` (grava `deactivated_at` uma única vez).
+- `/api/contact-coupons`: `POST /` = `link` (valida contato afiliado e cupom; dono ativo já existente → erro sugerindo transferência, inclusive na corrida via `UniqueConstraintError`), `PUT /:id` só `commission_rate` (vale só pros próximos pedidos), `POST /transfer` (inativa o dono atual + `link`, mesma transação), `PATCH /:id/deactivate` (grava `deactivated_at` uma única vez). Toda resposta (index, show e as 4 escritas) traz `coupon: { code, active }` (`ContactCoupon.belongsTo(Coupon, as "coupon")` em `sequelize-associations.ts`; repository `findPaginatedWithCoupon`/`findByIdWithCoupon`; service relê depois de escrever, peças internas `createLink`/`closeLink` devolvem cru).
 - Permissão: `authenticate` + `userPermissions` (tabelas `coupons`/`contact_coupons`).
 
 ## Dono na data (`findOwnerAt`)

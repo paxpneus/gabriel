@@ -24,6 +24,8 @@ jest.mock("../../contact-coupons/contact-coupons.repository", () => ({
     findById: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    findByIdWithCoupon: jest.fn(),
+    findPaginatedWithCoupon: jest.fn(),
   },
 }));
 
@@ -34,6 +36,7 @@ import contactCouponRepository from "../../contact-coupons/contact-coupons.repos
 import { ContactCouponService } from "../../contact-coupons/contact-coupons.service";
 
 const DTO = { contact_id: "affiliate-1", coupon_id: "coupon-1", commission_rate: 5 };
+const COUPON = { code: "PROMO10", active: true };
 
 describe("ContactCouponService", () => {
   let service: ContactCouponService;
@@ -49,6 +52,10 @@ describe("ContactCouponService", () => {
       id: "cc-new",
       ...data,
     }));
+    (contactCouponRepository.findByIdWithCoupon as jest.Mock).mockImplementation(async (id: string) => ({
+      id,
+      coupon: COUPON,
+    }));
   });
 
   describe("link", () => {
@@ -58,7 +65,13 @@ describe("ContactCouponService", () => {
       expect(contactService.findOne).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: "affiliate-1", type: "AFFILIATED" } }),
       );
-      expect(result).toEqual(expect.objectContaining({ id: "cc-new", commission_rate: 5 }));
+      expect(contactCouponRepository.create).toHaveBeenCalledWith(
+        { contact_id: "affiliate-1", coupon_id: "coupon-1", commission_rate: 5 },
+        { transaction: undefined },
+      );
+      // Resposta relida com o código/status do cupom.
+      expect(contactCouponRepository.findByIdWithCoupon).toHaveBeenCalledWith("cc-new");
+      expect(result).toEqual({ id: "cc-new", coupon: COUPON });
     });
 
     it("recusa contato que não é afiliado", async () => {
@@ -103,7 +116,8 @@ describe("ContactCouponService", () => {
         { contact_id: "affiliate-1", coupon_id: "coupon-1", commission_rate: 5 },
         { transaction: mockTransaction },
       );
-      expect(result).toEqual(expect.objectContaining({ id: "cc-new" }));
+      expect(contactCouponRepository.findByIdWithCoupon).toHaveBeenCalledWith("cc-new", mockTransaction);
+      expect(result).toEqual({ id: "cc-new", coupon: COUPON });
     });
   });
 
@@ -114,6 +128,59 @@ describe("ContactCouponService", () => {
       await service.deactivate("cc-old");
 
       expect(contactCouponRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("inativa e devolve o vínculo com o cupom", async () => {
+      (contactCouponRepository.findById as jest.Mock).mockResolvedValue({ id: "cc-1", active: true });
+      (contactCouponRepository.update as jest.Mock).mockResolvedValue({ id: "cc-1", active: false });
+
+      const result = await service.deactivate("cc-1");
+
+      expect(contactCouponRepository.update).toHaveBeenCalledWith(
+        "cc-1",
+        { active: false, deactivated_at: expect.any(Date) },
+        { transaction: undefined },
+      );
+      expect(result).toEqual({ id: "cc-1", coupon: COUPON });
+    });
+
+    it("vínculo inexistente: null (404 no controller)", async () => {
+      (contactCouponRepository.findById as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.deactivate("missing")).resolves.toBeNull();
+      expect(contactCouponRepository.findByIdWithCoupon).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateCommissionRate", () => {
+    it("muda a taxa e devolve o vínculo com o cupom", async () => {
+      (contactCouponRepository.update as jest.Mock).mockResolvedValue({ id: "cc-1" });
+
+      const result = await service.updateCommissionRate("cc-1", 7);
+
+      expect(contactCouponRepository.update).toHaveBeenCalledWith("cc-1", { commission_rate: 7 });
+      expect(result).toEqual({ id: "cc-1", coupon: COUPON });
+    });
+
+    it("vínculo inexistente: null", async () => {
+      (contactCouponRepository.update as jest.Mock).mockResolvedValue(null);
+
+      await expect(service.updateCommissionRate("missing", 7)).resolves.toBeNull();
+      expect(contactCouponRepository.findByIdWithCoupon).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("leitura", () => {
+    it("index e show trazem o cupom do vínculo", async () => {
+      const params = { page: 1 } as any;
+      await service.paginate(params);
+      await service.findById("cc-1");
+
+      expect(contactCouponRepository.findPaginatedWithCoupon).toHaveBeenCalledWith(
+        params,
+        expect.objectContaining({ filterableFields: ["contact_id", "coupon_id", "active"] }),
+      );
+      expect(contactCouponRepository.findByIdWithCoupon).toHaveBeenCalledWith("cc-1");
     });
   });
 });

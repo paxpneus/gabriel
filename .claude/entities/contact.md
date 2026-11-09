@@ -32,4 +32,5 @@ Vendedores do Bling e afiliados (clientes ficam em `customers`, não aqui apesar
 ## Afiliado
 
 - Sempre loja 21. Login/me próprios em `affiliated/` (`/api/contacts/affiliated/{login,me}`) — ver `../modules/auth.md` § "Login do afiliado".
+- Vendas dele: `GET /api/affiliated-report` (escopo pelo contato do usuário logado) — ver `../modules/reports.md` § `affiliated-report/`. Nunca dar ao papel "Afiliado" acesso ao `/api/seller-report`: o `resolveUserScope` de lá só restringe `seller`/`manager` e devolveria todas as vendas.
 - Comissão por cupom: `contact_coupons`/`order_coupons` — ver `coupon.md`. Nada em `custom_data`.
