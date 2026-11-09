@@ -235,8 +235,10 @@ export class ExpeditionScanLogService extends BaseService<
       const labelRead = labelcode;
       const volRead = labelcode.substring(35, 41);
 
+      // Só no lote atual: a mesma etiqueta é bipada em cada etapa (saída da emissora, entrada e saída do CD).
       const alreadyExists = await this.findOne({
-        where: { label_full_code: labelRead },
+        where: { label_full_code: labelRead, expedition_batch_id: batchid },
+        attributes: ["id"],
         transaction: t,
       });
 

@@ -989,14 +989,74 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
     expect((service.generateBatchFromInvoices as jest.Mock).mock.calls[1][2]).toBe("OUTGOING");
   });
 
-  it("notas que dariam tipos diferentes de lote → erro com os números de cada tipo", async () => {
+  it("sem tipo, transbordo com e sem lote de entrada → erro com os números de cada tipo", async () => {
     (invoiceService.findAll as jest.Mock).mockResolvedValue([
-      invoice("inv-1", "1001", OTHER_A, STORE_CNPJ),
-      invoice("inv-2", "1002", STORE_CNPJ, OTHER_B),
+      invoice("inv-1", "1001", OTHER_A, OTHER_B),
+      invoice("inv-2", "1002", OTHER_A, OTHER_B),
     ]);
+    (batchInvoicesService.findBatchIdsByInvoiceIds as jest.Mock).mockResolvedValue(new Map([["inv-2", "in-batch"]]));
 
     await expect(service.generateBatchFromQrCode("src-batch", "ub-1")).rejects.toThrow(
       "As notas do romaneio não são do mesmo tipo de lote nesta loja: entrada 1001; expedição 1002.",
+    );
+    expect(service.generateBatchFromInvoices).not.toHaveBeenCalled();
+  });
+
+  it("CD na chegada: nota destinada a ele + transbordo → entrada com todas as notas", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", OTHER_A, STORE_CNPJ),
+      invoice("inv-2", "1002", OTHER_A, OTHER_B),
+    ]);
+
+    await service.generateBatchFromQrCode("src-batch", "ub-1");
+
+    expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
+      ["inv-1", "inv-2"], "ub-1", "INCOMING", undefined, undefined,
+    );
+  });
+
+  it.each([undefined, "OUTGOING" as const])(
+    "CD reenviando (tipo %s): nota destinada ao CD termina nele e fica fora da expedição",
+    async (requestedType) => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        invoice("inv-1", "1001", OTHER_A, STORE_CNPJ),
+        invoice("inv-2", "1002", OTHER_A, OTHER_B),
+      ]);
+      (batchInvoicesService.findBatchIdsByInvoiceIds as jest.Mock).mockResolvedValue(
+        new Map([["inv-1", "in-batch"], ["inv-2", "in-batch"]]),
+      );
+
+      await service.generateBatchFromQrCode("src-batch", "ub-1", requestedType);
+
+      expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
+        ["inv-2"], "ub-1", "OUTGOING", undefined, undefined,
+      );
+    },
+  );
+
+  it("tela de expedição com romaneio só de notas recebidas pela loja → erro, sem gerar lote", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", OTHER_A, STORE_CNPJ),
+      invoice("inv-2", "1002", OTHER_A, STORE_CNPJ),
+    ]);
+    (batchInvoicesService.findBatchIdsByInvoiceIds as jest.Mock).mockResolvedValue(
+      new Map([["inv-1", "in-batch"], ["inv-2", "in-batch"]]),
+    );
+
+    await expect(service.generateBatchFromQrCode("src-batch", "ub-1", "OUTGOING")).rejects.toThrow(
+      "As notas 1001, 1002 são de entrada nesta loja. Use a tela de entrada.",
+    );
+    expect(service.generateBatchFromInvoices).not.toHaveBeenCalled();
+  });
+
+  it("tela de entrada com nota emitida pela loja → erro, sem gerar lote", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", STORE_CNPJ, OTHER_A),
+      invoice("inv-2", "1002", OTHER_A, STORE_CNPJ),
+    ]);
+
+    await expect(service.generateBatchFromQrCode("src-batch", "ub-1", "INCOMING")).rejects.toThrow(
+      "As notas 1001 são de expedição nesta loja. Use a tela de expedição.",
     );
     expect(service.generateBatchFromInvoices).not.toHaveBeenCalled();
   });
@@ -1018,8 +1078,6 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
     expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
       ["inv-1", "inv-2"], "ub-1", "OUTGOING", undefined, undefined,
     );
-    // Com tipo pedido não há decisão automática por nota.
-    expect(batchInvoicesService.findBatchIdsByInvoiceIds).not.toHaveBeenCalled();
   });
 
   it("QR de lote que não é de expedição, ou da própria loja → erro sem gerar lote", async () => {

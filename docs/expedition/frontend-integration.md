@@ -34,6 +34,10 @@ A loja que bipa o QR de um romaneio de outra loja ganha um lote com as mesmas no
 | transbordo (CD), e a nota ainda não tem lote de entrada nesta loja | entrada |
 | transbordo (CD), e a nota já tem lote de entrada nesta loja | expedição |
 
+**Expedição pelo QR**: nota destinada à própria loja termina ali e fica fora do lote de expedição. Exemplo: o romaneio da loja 17 tem uma nota para o CD e três para outras lojas. Na expedição, o CD bipa esse QR e o lote sai só com as três.
+
+**Loja comum e romaneio do CD**: se o romaneio do CD tiver nota de outra loja, a leitura é bloqueada. A loja recebe pelo QR do romaneio da emissora. O romaneio do CD com notas de várias lojas se recebe pelo desktop ou bipando a chave de acesso das notas.
+
 No CD, a mesma folha de romaneio serve pros dois momentos: na tela de entrada (`type: "INCOMING"`) na chegada, e na tela de expedição (`type: "OUTGOING"`) depois de finalizar a entrada.
 
 **Body**
@@ -65,9 +69,11 @@ A loja é sempre a do usuário logado.
 | `O QR lido não é de um romaneio de expedição.` | O lote não existe ou é de entrada |
 | `Este romaneio é desta própria loja.` | O romaneio é da própria loja logada |
 | `O romaneio lido não tem notas.` | O lote do romaneio está vazio |
-| `As notas do romaneio não são do mesmo tipo de lote nesta loja: entrada 1001; expedição 1002.` | Só sem `type`: parte das notas daria entrada e parte expedição |
+| `As notas do romaneio não são do mesmo tipo de lote nesta loja: entrada 1001; expedição 1002.` | Só sem `type`: no CD, parte das notas de transbordo ainda não tem entrada e parte já tem |
+| `As notas 1001, 1002 são de entrada nesta loja. Use a tela de entrada.` | Pediu expedição, mas todas as notas são recebidas pela loja |
+| `As notas 1001 são de expedição nesta loja. Use a tela de expedição.` | Pediu entrada com nota emitida pela própria loja |
 | `Nota 1001 ainda não foi recebida nesta loja. Finalize o lote de entrada antes de gerar o de expedição.` | CD pedindo expedição de nota de transbordo sem entrada finalizada na loja |
-| `Leitura bloqueada: nota fiscal não pertence à sua unidade de negócio` | Loja sem transbordo bipando nota que não é dela |
+| `Leitura bloqueada: nota fiscal não pertence à sua unidade de negócio` | Loja sem transbordo bipando romaneio com nota de outra loja (ex.: romaneio do CD) |
 
 Também valem os erros que a geração de lote já tinha: produto não mapeado, conciliação na Bling e pedido do PDV com erro crítico.
 
@@ -98,6 +104,7 @@ As rotas de sempre continuam funcionando no CD: `POST /batch/generate-from-invoi
 - **Marca no lote.** Cada nota do lote passa a ter `batchInvoices[].is_transshipment` (`true`/`false`) em todas as rotas que devolvem o lote completo, inclusive a resposta de gerar lote e o `GET /batch/full/get`. Sugestão: mostrar um selo "Transbordo" nessas notas.
 - **Marca na listagem de lotes.** `GET /batch` (listagens de lotes de expedição e de entrada) traz `has_transshipment` (`true`/`false`) em cada lote: `true` se alguma nota do lote é de transbordo. Serve pro selo "Transbordo" na linha do lote, sem buscar o lote completo.
 - **Conferência na Tecinco.** É automática, como sempre, e as notas de transbordo ficam de fora. O front não faz nada.
+- **Etiqueta de volume.** "Volume já lido" vale só dentro do mesmo lote. O CD bipa as mesmas etiquetas da emissora na entrada e na expedição.
 
 ---
 

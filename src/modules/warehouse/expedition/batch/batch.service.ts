@@ -668,6 +668,7 @@ export class ExpeditionBatchService extends BaseService<
   // QR do romaneio (id do lote de expedição de outra loja): gera o lote desta loja com as notas dele.
   // requestedType (tela escolheu entrada/expedição) é respeitado — expedição sem entrada finalizada dá erro, nunca vira entrada.
   // Sem ele, tipo por nota: emissora → expedição; destinatária → entrada; transbordo → entrada, ou expedição se já tem lote de entrada aqui.
+  // Na expedição, nota destinada a esta loja fica fora (termina aqui); tela errada em nota da loja dá erro.
   async generateBatchFromQrCode(
     sourceBatchId: string,
     unitBusinessId: string,
@@ -694,11 +695,6 @@ export class ExpeditionBatchService extends BaseService<
       throw new Error("O romaneio lido não tem notas.");
     }
 
-    // Tipo pedido: as travas do generateBatchFromInvoices (assertTransshipment) barram expedição sem entrada finalizada.
-    if (requestedType) {
-      return this.generateBatchFromInvoices(invoiceIds, unitBusinessId, requestedType, mode, blingCheckJobId);
-    }
-
     const [unitBusiness, invoices, incomingBatchIdByInvoiceId] = await Promise.all([
       unitBusinessService.findById(unitBusinessId, {
         attributes: ["id", "cnpj", "transshipment_allowed"],
@@ -711,28 +707,49 @@ export class ExpeditionBatchService extends BaseService<
     ]);
     if (!unitBusiness) throw new Error("Loja não encontrada.");
 
-    // Nota de transbordo em loja sem transbordo cai em entrada e o assertTransshipment barra com a mensagem de sempre.
+    // Papel da loja em cada nota. Nota de outra loja em loja sem transbordo cai em transbordo-entrada e o assertTransshipment barra.
+    type Note = { id: string; number: string };
     const unitCnpj = cleanDocument(unitBusiness.cnpj);
-    const invoiceNumbersByType: Record<BatchType, string[]> = { INCOMING: [], OUTGOING: [] };
+    const receivedNotes: Note[] = [];
+    const sentNotes: Note[] = [];
+    const transitNotesByType: Record<BatchType, Note[]> = { INCOMING: [], OUTGOING: [] };
     for (const invoice of invoices) {
-      let type: BatchType = "INCOMING";
+      const note = { id: invoice.id, number: invoice.number_system ?? invoice.id };
       if (isTransshipmentInvoice(invoice, unitBusiness.cnpj)) {
-        if (incomingBatchIdByInvoiceId.has(invoice.id)) type = "OUTGOING";
-      } else if (cleanDocument(invoice.sender_cnpj ?? "") === unitCnpj) {
-        type = "OUTGOING";
+        transitNotesByType[incomingBatchIdByInvoiceId.has(invoice.id) ? "OUTGOING" : "INCOMING"].push(note);
+      } else if (cleanDocument(invoice.receiver_cnpj ?? "") === unitCnpj) {
+        receivedNotes.push(note);
+      } else {
+        sentNotes.push(note);
       }
-      invoiceNumbersByType[type].push(invoice.number_system ?? invoice.id);
+    }
+    const numbers = (notes: Note[]) => notes.map((n) => n.number).join(", ");
+    const outgoingNotes = [...sentNotes, ...transitNotesByType.OUTGOING];
+
+    // Sem tipo pedido: expedição se alguma nota é de expedição nesta loja (as recebidas aqui não contam).
+    const type: BatchType = requestedType ?? (outgoingNotes.length ? "OUTGOING" : "INCOMING");
+
+    if (type === "INCOMING") {
+      // Nota emitida pela loja não vira entrada pelo QR (tela errada).
+      if (sentNotes.length) {
+        throw new Error(`As notas ${numbers(sentNotes)} são de expedição nesta loja. Use a tela de expedição.`);
+      }
+      // Travas do generateBatchFromInvoices (assertTransshipment) valem como sempre; bipar de novo devolve o lote existente.
+      return this.generateBatchFromInvoices(invoiceIds, unitBusinessId, type, mode, blingCheckJobId);
     }
 
-    // Um lote tem um type só.
-    if (invoiceNumbersByType.INCOMING.length && invoiceNumbersByType.OUTGOING.length) {
+    // Expedição: nota destinada a esta loja termina aqui e fica fora do lote.
+    if (!outgoingNotes.length && !transitNotesByType.INCOMING.length) {
+      throw new Error(`As notas ${numbers(receivedNotes)} são de entrada nesta loja. Use a tela de entrada.`);
+    }
+    // Sem tipo pedido, um lote tem um type só. Com tipo pedido, o assertTransshipment barra transbordo sem entrada finalizada.
+    if (!requestedType && transitNotesByType.INCOMING.length) {
       throw new Error(
-        `As notas do romaneio não são do mesmo tipo de lote nesta loja: entrada ${invoiceNumbersByType.INCOMING.join(", ")}; expedição ${invoiceNumbersByType.OUTGOING.join(", ")}.`,
+        `As notas do romaneio não são do mesmo tipo de lote nesta loja: entrada ${numbers(transitNotesByType.INCOMING)}; expedição ${numbers(outgoingNotes)}.`,
       );
     }
-    const type: BatchType = invoiceNumbersByType.OUTGOING.length ? "OUTGOING" : "INCOMING";
-
-    return this.generateBatchFromInvoices(invoiceIds, unitBusinessId, type, mode, blingCheckJobId);
+    const batchInvoiceIds = [...outgoingNotes, ...transitNotesByType.INCOMING].map((n) => n.id);
+    return this.generateBatchFromInvoices(batchInvoiceIds, unitBusinessId, type, mode, blingCheckJobId);
   }
 
 async addInvoiceToBatch(

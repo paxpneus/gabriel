@@ -2,7 +2,6 @@ import { Op, Transaction } from 'sequelize';
 import BaseRepository from '../../../../shared/utils/base-models/base-repository';
 import ExpeditionBatch from '../batch/batch.model';
 import ExpeditionBatchInvoice from './batch-invoices.model';
-import { CLOSED_EXPEDITION_BATCH_STATUSES } from '../batch/batch.types';
 
 export class ExpeditionBatchInvoiceRepository extends BaseRepository<ExpeditionBatchInvoice> {
   constructor() {
@@ -68,7 +67,8 @@ export class ExpeditionBatchInvoiceRepository extends BaseRepository<ExpeditionB
           as: 'batch',
           required: true,
           attributes: [],
-          where: { status: { [Op.notIn]: [...CLOSED_EXPEDITION_BATCH_STATUSES] } },
+          // Só FINISHED fecha: o enum do status do lote não tem CANCELLED (NOT IN com ele quebra no Postgres).
+          where: { status: { [Op.ne]: 'FINISHED' } },
         },
       ],
     });
