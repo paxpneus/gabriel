@@ -20,6 +20,7 @@ import invoiceItemsRepository, {
   InvoiceItemsRepository,
 } from "./invoice-items.repository";
 import { resolveIntegrationsIdForUnitBusiness } from "../../../../handlers/tecinco/queues/helpers/product.helpers";
+import { pickBatchAttribute } from "../../../expedition/utils/helpers/transshipment-resolver";
 
 export class InvoiceItemsService extends BaseService<
   InvoiceItems,
@@ -430,7 +431,7 @@ export class InvoiceItemsService extends BaseService<
 
     const batchInvoices = await batchInvoicesService.findAll({
       where: { invoice_id: { [Op.in]: invoiceIds } },
-      attributes: ["id", "invoice_id", "expedition_batch_id"],
+      attributes: ["id", "invoice_id", "expedition_batch_id", "is_transshipment"],
     });
 
     await Promise.all(batchInvoices.map((b) => this.syncBatchFromInvoice(b)));
@@ -464,8 +465,13 @@ export class InvoiceItemsService extends BaseService<
         return;
       }
 
-      const invoiceUnitBusinessAttr = invoice.unitBusinessAttributes?.find(
-        (uba) => uba.unit_business_id === batch.unit_business_id,
+      // Transbordo: a loja tem entrada e expedição da nota — vale a linha do type deste lote.
+      const invoiceUnitBusinessAttr = pickBatchAttribute(
+        invoice.unitBusinessAttributes?.filter(
+          (uba) => uba.unit_business_id === batch.unit_business_id,
+        ),
+        batch.type,
+        !!batchInvoice.is_transshipment,
       );
 
       if (!invoiceUnitBusinessAttr) {

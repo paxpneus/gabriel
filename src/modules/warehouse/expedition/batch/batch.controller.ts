@@ -43,6 +43,7 @@ export class ExpeditionBatchController extends BaseController<
       show: [authenticate, userPermissions],
       destroy: [authenticate, userPermissions],
       generateBatchesFromInvoices: [authenticate, userPermissions],
+      generateBatchFromQrCode: [authenticate, userPermissions],
       enqueueBlingReconciliationCheck: [authenticate, userPermissions],
       getBlingReconciliationCheckStatus: [authenticate, userPermissions],
       getBatchesByInvoice: [authenticate, userPermissions],
@@ -75,6 +76,13 @@ export class ExpeditionBatchController extends BaseController<
       "/generate-from-invoices",
       ...this.mw("generateBatchesFromInvoices"),
       (req, res) => this.generateBatchesFromInvoices(req, res),
+    );
+
+    // QR do romaneio: id do lote de expedição de outra loja → lote desta loja com as mesmas notas.
+    this.router.post(
+      "/from-qr-code",
+      ...this.mw("generateBatchFromQrCode"),
+      this.generateBatchFromQrCode,
     );
 
     // Lote de entrada com nota Bling: 1ª etapa (avaliação na Bling por job) + polling do status; o jobId vai no gerar lote.
@@ -248,6 +256,34 @@ export class ExpeditionBatchController extends BaseController<
     try {
       const result = await this.service.getBlingReconciliationCheckStatus(req.params.jobId as string);
       return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // Loja = a do usuário logado; type opcional (tela de entrada/expedição) — sem ele o service resolve pela loja em cada nota.
+  generateBatchFromQrCode = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const { batchId, type, mode, blingCheckJobId } = req.body ?? {};
+      if (type !== undefined && type !== "INCOMING" && type !== "OUTGOING") {
+        return res.status(400).json({ error: "Tipo de lote inválido. Use entrada ou expedição." });
+      }
+      const { unitBusinessId } = await getUserContext(req);
+      if (!unitBusinessId) {
+        return res.status(400).json({ error: "Loja do usuário não encontrada." });
+      }
+
+      const batch = await this.service.generateBatchFromQrCode(
+        assertUuid(batchId, "QR do romaneio"),
+        unitBusinessId,
+        type,
+        mode,
+        blingCheckJobId,
+      );
+      return res.status(201).json(batch);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

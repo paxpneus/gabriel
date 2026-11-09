@@ -289,9 +289,12 @@ export class InvoiceController extends BaseController<
         req,
         context.unitBusinessId,
       );
+      // ?type= na loja de transbordo: a nota tem lote de entrada e de expedição ali.
+      const { type } = req.query;
       const data = await this.service.findByIdFullWithBatch(
         id as string,
         unitBusinessId,
+        type === "INCOMING" || type === "OUTGOING" ? type : undefined,
       );
       return res.json({ data });
     } catch (err: any) {

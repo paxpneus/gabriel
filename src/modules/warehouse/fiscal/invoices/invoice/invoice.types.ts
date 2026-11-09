@@ -252,12 +252,11 @@ export type SefazManifestationStatus =
   | "PROCNFE_DESISTIDO";
 
 
-// Nota alvo de cancelamento direto (cancelInvoice/bondReturnInvoice): status por unit business + lote.
+// Nota alvo de cancelamento direto (cancelInvoice/bondReturnInvoice): status por unit business + vínculos em lote aberto.
 export interface InvoiceCancellationTarget {
   id: string;
   number_system: string;
   return_invoice_reference: string | null;
   statuses: InvoiceStatus[];
-  batchInvoiceId: string | null;
-  batchStatus: string | null;
+  openBatchInvoiceIds: string[];
 }

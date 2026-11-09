@@ -25,6 +25,7 @@ import {
   WhereOptions,
 } from "sequelize";
 import ExpeditionBatchInvoice from "../../../expedition/batch-invoices/batch-invoices.model";
+import expeditionBatchInvoiceRepository from "../../../expedition/batch-invoices/batch-invoices.repository";
 import BatchInvoiceItems from "../../../expedition/batch-invoice-items/batch-invoice-items.model";
 import ExpeditionBatchItems from "../../../expedition/batch-items/batch-items.model";
 import ExpeditionBatch from "../../../expedition/batch/batch.model";
@@ -54,6 +55,7 @@ import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
 import { invoiceCancelledSql, pendingCancellationWhere } from "./helpers/custom-filters";
 import { xmlHeadLiteral } from "./helpers/nfe-ide";
 import { deliveryNoteGeneratedLiteral } from "./helpers/delivery-note";
+import { batchInvoiceScopeWhere, batchTypesFromFilter } from "./helpers/batch-invoice-scope";
 import { LOGISTIC_OCCURRENCE_CODES } from "../../../../handlers/logistic/constants/constants";
 import SalesOrderItemSnapshot from "../../../../reports/daily-sales/sales-order-item-snapshot/sales-order-item-snapshot.model";
 import KitComponent from "../../../../inventory/kit-components/kit-component.model";
@@ -413,10 +415,16 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     };
     const hasAttrFilter = Object.keys(attrWhere).length > 0;
     const batchStatusWhere = this.extractBatchStatusFilter(params.filters);
+    const batchTypes = batchTypesFromFilter((attrWhere as any).type);
 
     return {
       attrWhere: hasAttrFilter ? attrWhere : undefined,
       hasAttrFilter,
+      // Vínculo nota→lote da loja; com filters[type], a nota de transbordo mostra o lote desse type.
+      batchInvoiceWhere: batchInvoiceScopeWhere(unitBusinessId, batchTypes),
+      // Um type só: total_read soma só os lotes dele (transbordo tem entrada e expedição na mesma loja).
+      batchType:
+        batchTypes.length === 1 ? (batchTypes[0] as "INCOMING" | "OUTGOING") : undefined,
       batchWhere: {
         ...(unitBusinessId ? { unit_business_id: unitBusinessId } : {}),
         ...(batchStatusWhere ?? {}),
@@ -434,11 +442,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
   private listedInvoiceCalculatedAttributes(
     unitBusinessId?: string,
+    batchType?: "INCOMING" | "OUTGOING",
   ): ProjectionAlias[] {
     return [
       [this.productBrandsLiteral(), "product_brands"],
       [totalExpectedLiteral(), "total_expected"],
-      [totalReadLiteral(unitBusinessId), "total_read"],
+      [totalReadLiteral(unitBusinessId, "Invoice", batchType), "total_read"],
     ];
   }
 
@@ -469,6 +478,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
             as: "batchInvoice",
             required: filters.hasBatchFilter,
             attributes: ["id"],
+            where: filters.batchInvoiceWhere,
             include: [
               {
                 model: ExpeditionBatch,
@@ -501,7 +511,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         ],
         attributes: [
           ...SUMMARY_INVOICE_ATTRIBUTES,
-          ...this.listedInvoiceCalculatedAttributes(unitBusinessId),
+          ...this.listedInvoiceCalculatedAttributes(unitBusinessId, filters.batchType),
         ],
       },
     };
@@ -538,6 +548,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
             as: "batchInvoice",
             required: filters.hasBatchFilter,
             attributes: ["id"],
+            where: filters.batchInvoiceWhere,
             include: [
               {
                 model: ExpeditionBatch,
@@ -576,7 +587,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           // observation só no detalhe por id, nunca em listagem.
           exclude: ["source_payload", "xml_path", "observation"],
           include: [
-            ...this.listedInvoiceCalculatedAttributes(unitBusinessId),
+            ...this.listedInvoiceCalculatedAttributes(unitBusinessId, filters.batchType),
             [deliveryNoteGeneratedLiteral(), "delivery_note_generated"],
           ],
         },
@@ -887,16 +898,18 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
   // ─── Detalhe completo (com batch) ───────────────────────────────────────────
 
+  // type opcional: na loja de transbordo a nota tem entrada e expedição — escolhe a linha de atributo e o lote desse type.
   async getFullInvoiceWithBatch(
     invoiceId: string,
     unitBusinessId: string,
+    type?: "INCOMING" | "OUTGOING",
   ): Promise<FullInvoiceMappedForFrontend> {
     const data = await this.findById(invoiceId, {
       attributes: {
         exclude: ["xml_path", "source_payload"],
         include: [
           [totalExpectedLiteral(), "total_expected"],
-          [totalReadLiteral(unitBusinessId), "total_read"],
+          [totalReadLiteral(unitBusinessId, "Invoice", type), "total_read"],
           [xmlHeadLiteral(), "xml_head"],
         ],
       },
@@ -904,7 +917,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         {
           model: InvoiceUnitBusinessAttributes,
           as: "unitBusinessAttributes",
-          where: { unit_business_id: unitBusinessId },
+          where: { unit_business_id: unitBusinessId, ...(type && { type }) },
           required: false,
           attributes: ["status", "type", "batch_generated", "unit_business_id"],
           include: [{ model: UnitBusiness, as: "unitBusiness" }],
@@ -932,6 +945,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           model: ExpeditionBatchInvoice,
           as: "batchInvoice",
           required: false,
+          where: batchInvoiceScopeWhere(unitBusinessId, type ? [type] : []),
           include: [
             {
               model: ExpeditionBatch,
@@ -1144,7 +1158,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     return this.findCancellationTarget({ id: invoiceId });
   }
 
-  // Status de cada unit business + status do lote, pra saber se ainda dá pra tirar a nota dele.
+  // Status de cada unit business + vínculos em lote aberto (todos: a nota pode estar em lotes de várias lojas/tipos).
   private async findCancellationTarget(
     where: WhereOptions,
     attrWhere?: WhereOptions,
@@ -1160,15 +1174,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           ...(attrWhere && { where: attrWhere }),
           attributes: ["status"],
         },
-        {
-          model: ExpeditionBatchInvoice,
-          as: "batchInvoice",
-          required: false,
-          attributes: ["id"],
-          include: [
-            { model: ExpeditionBatch, as: "batch", attributes: ["status"] },
-          ],
-        },
       ],
     });
     if (!data) return null;
@@ -1179,8 +1184,8 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       number_system: plain.number_system,
       return_invoice_reference: plain.return_invoice_reference ?? null,
       statuses: plain.unitBusinessAttributes.map((attr: any) => attr.status),
-      batchInvoiceId: plain.batchInvoice?.id ?? null,
-      batchStatus: plain.batchInvoice?.batch?.status ?? null,
+      openBatchInvoiceIds:
+        await expeditionBatchInvoiceRepository.findOpenIdsByInvoiceId(plain.id),
     };
   }
 
@@ -1209,15 +1214,18 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     });
   }
 
+  // type opcional: a loja de transbordo tem uma linha por type (entrada e expedição); as demais, uma só.
   async findInvoiceAttribute(
     invoiceId: string,
     unitBusinessId: string,
+    type?: "INCOMING" | "OUTGOING",
     transaction?: Transaction,
   ): Promise<InvoiceUnitBusinessAttributes | null> {
     return InvoiceUnitBusinessAttributes.findOne({
       where: {
         invoice_id: invoiceId,
         unit_business_id: unitBusinessId,
+        ...(type && { type }),
       },
       transaction,
     });

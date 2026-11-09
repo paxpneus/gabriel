@@ -8,7 +8,12 @@ export function totalExpectedLiteral(tableAlias: string = "Invoice") {
     )`);
 }
 
-export function totalReadLiteral(unitBusinessId?: string, tableAlias: string = "Invoice") {
+// batchType: a loja de transbordo tem lote de entrada e de expedição da mesma nota — soma só os do type informado.
+export function totalReadLiteral(
+  unitBusinessId?: string,
+  tableAlias: string = "Invoice",
+  batchType?: "INCOMING" | "OUTGOING",
+) {
   return Sequelize.literal(`(
     SELECT COALESCE(SUM(bii.quantity_read), 0)
     FROM expedition_batch_invoices ebi
@@ -16,5 +21,6 @@ export function totalReadLiteral(unitBusinessId?: string, tableAlias: string = "
     INNER JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
     WHERE ebi.invoice_id = "${tableAlias}"."id"
       ${unitBusinessId ? `AND eb.unit_business_id = '${unitBusinessId}'` : ""}
+      ${batchType === "INCOMING" || batchType === "OUTGOING" ? `AND eb.type = '${batchType}'` : ""}
   )`);
 }

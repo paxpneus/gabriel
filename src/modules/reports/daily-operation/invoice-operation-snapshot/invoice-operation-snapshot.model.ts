@@ -33,6 +33,7 @@ class InvoiceOperationSnapshot
   public hours_batch_to_fully_scanned?: number | string | null;
   public is_supplier_return?: boolean;
   public is_advance_payment?: boolean;
+  public is_transshipment?: boolean;
   public snapshot_status?: InvoiceOperationSnapshotStatus;
   public last_updated_at?: Date;
 
@@ -51,7 +52,6 @@ InvoiceOperationSnapshot.init(
     invoice_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      unique: true,
       references: { model: "invoices", key: "id" },
     },
     unit_business_id: {
@@ -122,6 +122,12 @@ InvoiceOperationSnapshot.init(
       allowNull: false,
       defaultValue: false,
     },
+    // Loja de transbordo (nem emissora nem destinatária): "Entrada transbordo"/"Saída transbordo".
+    is_transshipment: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
     snapshot_status: {
       type: DataTypes.STRING(20),
       defaultValue: "open",
@@ -136,6 +142,14 @@ InvoiceOperationSnapshot.init(
     tableName: "invoice_operation_snapshots",
     timestamps: true,
     underscored: true,
+    // Por type: a loja de transbordo tem entrada e expedição da mesma nota (m342).
+    indexes: [
+      {
+        unique: true,
+        fields: ["invoice_id", "unit_business_id", "type"],
+        name: "invoice_operation_snapshots_invoice_unit_business_type_key",
+      },
+    ],
   },
 );
 

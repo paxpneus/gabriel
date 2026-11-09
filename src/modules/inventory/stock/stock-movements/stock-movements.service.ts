@@ -24,6 +24,7 @@ import stockMovementSourceDataService from "../stock-movement-source-data/stock-
 import stockService from "../stock/stock.service";
 import { computePurchaseEntryDiscounts } from "./helpers/purchase-entry-discount";
 import { InvoiceValueFill } from "./helpers/invoice-value-updates";
+import { isTransshipmentInvoice } from "../../../warehouse/expedition/utils/helpers/transshipment-resolver";
 
 // Estado de saldo/custo usado para encadear um movimento a partir do anterior.
 type BalanceState = {
@@ -1878,6 +1879,9 @@ export class StockMovementService extends BaseService<
     const result: ListSourceDataFromInvoices[] = [];
 
     for (const invoice of validInvoices) {
+      // Transbordo: a loja não é emissora nem destinatária, a carga só passa por ela — sem movimento de estoque.
+      if (isTransshipmentInvoice(invoice, unitBusinessCnpj)) continue;
+
       const myUba = invoice.unitBusinessAttributes?.find(
         (uba) => uba.unit_business_id === unitBusinessId,
       );

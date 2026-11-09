@@ -9,6 +9,7 @@ import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import ExpeditionBatch from "./batch.model";
 import { ExpeditionBatchFull } from "./batch.types";
+import { pickBatchAttribute } from "../utils/helpers/transshipment-resolver";
 import User from "../../../company/users/users/user.model";
 import BatchInvoiceItems from "../batch-invoice-items/batch-invoice-items.model";
 import InvoiceUnitBusinessAttributes from "../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
@@ -26,8 +27,8 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
     super(ExpeditionBatch);
   }
 
-  // include reutilizável — recebe unit_business_id do próprio batch
-  private batchInvoicesInclude(unitBusinessId: string) {
+  // include reutilizável — recebe unit_business_id e type do próprio batch (type: total lido só dos lotes desse tipo).
+  private batchInvoicesInclude(unitBusinessId: string, batchType?: "INCOMING" | "OUTGOING") {
     return {
       model: ExpeditionBatchInvoice,
       as: "batchInvoices",
@@ -40,7 +41,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
             exclude: ["xml_path", "source_payload"],
             include: [
               [totalExpectedLiteral("invoice"), "total_expected"],
-              [totalReadLiteral(unitBusinessId, "invoice"), "total_read"],
+              [totalReadLiteral(unitBusinessId, "invoice", batchType), "total_read"],
             ] as [Literal, string][],
           },
           include: [
@@ -89,10 +90,10 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
     options?: FindOptions,
   ): Promise<ExpeditionBatchFull> {
     const batchBase = batchId
-      ? await this.findById(batchId, { attributes: ["id", "unit_business_id"] , ...options,})
+      ? await this.findById(batchId, { attributes: ["id", "unit_business_id", "type"] , ...options,})
       : await this.findOne({
           where: { number },
-          attributes: ["id", "unit_business_id"],
+          attributes: ["id", "unit_business_id", "type"],
           ...options,
         });
 
@@ -100,15 +101,16 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
     if (!batchBase) throw new Error("Lote não encontrado");
 
     const unitBusinessId = (batchBase as any).unit_business_id;
+    const batchType = (batchBase as any).type;
 
     const data = batchId
       ? await this.findById(batchId, {
-          include: this.buildFullIncludes(unitBusinessId),
+          include: this.buildFullIncludes(unitBusinessId, batchType),
           ...options,
         })
       : await this.findOne({
           where: { number },
-          include: this.buildFullIncludes(unitBusinessId),
+          include: this.buildFullIncludes(unitBusinessId, batchType),
           ...options,
         });
 
@@ -143,13 +145,13 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
     ) as ExpeditionBatchFull[];
   }
 
-   buildFullIncludes(unitBusinessId: string) {
+   buildFullIncludes(unitBusinessId: string, batchType?: "INCOMING" | "OUTGOING") {
     return [
       { model: Integration, as: 'integration'},
       { model: User, as: "operator" },
       { model: UnitBusiness, as: "unitBusiness" },
       { model: Transporter, as: "transporter" },
-      this.batchInvoicesInclude(unitBusinessId),
+      this.batchInvoicesInclude(unitBusinessId, batchType),
       {
         model: ExpeditionBatchItems,
         as: "items",
@@ -168,6 +170,18 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
     ];
   }
 
+  // Atributo calculado `has_transshipment`: alguma nota do lote entrou como transbordo (selo nas listagens de lote).
+  hasTransshipmentAttribute(): [Literal, string] {
+    return [
+      literal(`EXISTS (
+        SELECT 1 FROM expedition_batch_invoices ebi
+        WHERE ebi.expedition_batch_id = "ExpeditionBatch"."id"
+          AND ebi.is_transshipment = TRUE
+      )`),
+      "has_transshipment",
+    ];
+  }
+
   normalizeBatchPlain(plain: any): ExpeditionBatchFull {
     return {
       ...plain,
@@ -176,8 +190,11 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
         invoice: bi.invoice
           ? {
               ...bi.invoice,
-              unitBusinessAttributes:
-                bi.invoice.unitBusinessAttributes?.[0] ?? null,
+              unitBusinessAttributes: pickBatchAttribute(
+                bi.invoice.unitBusinessAttributes,
+                plain.type,
+                !!bi.is_transshipment,
+              ),
             }
           : bi.invoice,
         items: bi.items?.map((item: any) => ({

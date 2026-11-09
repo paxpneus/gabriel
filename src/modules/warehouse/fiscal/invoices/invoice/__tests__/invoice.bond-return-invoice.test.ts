@@ -102,8 +102,7 @@ const makeOutgoing = (
   number_system: "019142",
   return_invoice_reference: null,
   statuses: ["FINISHED"],
-  batchInvoiceId: null,
-  batchStatus: null,
+  openBatchInvoiceIds: [],
   ...overrides,
 });
 
@@ -172,7 +171,7 @@ describe("InvoiceService.bondReturnInvoice", () => {
 
   it("em lote aberto: tira do lote antes de gravar CANCELLED (removeBatchInvoice volta pra OPEN)", async () => {
     repo.findOutgoingByXmlKey.mockResolvedValue(
-      makeOutgoing({ batchInvoiceId: "bi-1", batchStatus: "OPEN" }),
+      makeOutgoing({ openBatchInvoiceIds: ["bi-1"] }),
     );
 
     await invoiceService.bondReturnInvoice(RETURN_INVOICE, REF_KEY);
@@ -185,7 +184,7 @@ describe("InvoiceService.bondReturnInvoice", () => {
 
   it("em lote finalizado: mantém no lote e cancela mesmo assim", async () => {
     repo.findOutgoingByXmlKey.mockResolvedValue(
-      makeOutgoing({ batchInvoiceId: "bi-1", batchStatus: "FINISHED" }),
+      makeOutgoing({ openBatchInvoiceIds: [] }),
     );
 
     const result = await invoiceService.bondReturnInvoice(
@@ -219,7 +218,7 @@ describe("InvoiceService.cancelInvoice", () => {
 
   it("em lote aberto: tira do lote antes do CANCELLED", async () => {
     repo.findCancellationTargetById.mockResolvedValue(
-      makeOutgoing({ statuses: ["PENDING"], batchInvoiceId: "bi-1", batchStatus: "OPEN" }),
+      makeOutgoing({ statuses: ["PENDING"], openBatchInvoiceIds: ["bi-1"] }),
     );
 
     await invoiceService.cancelInvoice("outgoing-1");
@@ -230,9 +229,33 @@ describe("InvoiceService.cancelInvoice", () => {
     );
   });
 
+  it("em vários lotes abertos (ex.: emissora e transbordo): tira a nota de todos antes do CANCELLED", async () => {
+    repo.findCancellationTargetById.mockResolvedValue(
+      makeOutgoing({ statuses: ["PENDING"], openBatchInvoiceIds: ["bi-1", "bi-2"] }),
+    );
+
+    await invoiceService.cancelInvoice("outgoing-1");
+
+    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction);
+    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-2", fakeTransaction);
+    expect(
+      Math.max(...removeBatchInvoice.mock.invocationCallOrder),
+    ).toBeLessThan(repo.updateWithAttributesForAllUnits.mock.invocationCallOrder[0]);
+  });
+
+  it("CANCELLED mas ainda em lote aberto: tira do lote", async () => {
+    repo.findCancellationTargetById.mockResolvedValue(
+      makeOutgoing({ statuses: ["CANCELLED"], openBatchInvoiceIds: ["bi-1"] }),
+    );
+
+    await invoiceService.cancelInvoice("outgoing-1");
+
+    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction);
+  });
+
   it("em lote finalizado: mantém no lote e cancela", async () => {
     repo.findCancellationTargetById.mockResolvedValue(
-      makeOutgoing({ statuses: ["FINISHED"], batchInvoiceId: "bi-1", batchStatus: "FINISHED" }),
+      makeOutgoing({ statuses: ["FINISHED"], openBatchInvoiceIds: [] }),
     );
 
     await invoiceService.cancelInvoice("outgoing-1");

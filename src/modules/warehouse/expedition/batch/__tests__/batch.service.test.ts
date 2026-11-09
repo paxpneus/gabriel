@@ -56,7 +56,9 @@ jest.mock("../../../../company/unit-business/unit-business.service", () => ({
   default: { findOne: jest.fn() },
 }));
 
+// Só o assertTransshipment (consulta o banco) é mock; os helpers puros do mesmo arquivo seguem reais.
 jest.mock("../../utils/helpers/transshipment-resolver", () => ({
+  ...jest.requireActual("../../utils/helpers/transshipment-resolver"),
   __esModule: true,
   assertTransshipment: jest.fn(),
 }));
@@ -115,7 +117,7 @@ import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
 import batchInvoicesService from "../../batch-invoices/batch-invoices.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
-import { assertTransshipment } from "../../utils/helpers/transshipment-resolver";
+import { assertTransshipment, batchAttributeWhere } from "../../utils/helpers/transshipment-resolver";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { ExpeditionBatchService } from "../batch.service";
 
@@ -233,6 +235,75 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
         ).rejects.toThrow("SENTINEL_CRIOU");
 
         expect((invoiceService as any).updateInvoices).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("transbordo (loja nem emissora nem destinatária)", () => {
+      const keys = ["29260802036483000614550010004404561245674661", "29260802036483000614550010004404561245674662"];
+
+      beforeEach(() => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([
+          makeInvoice({ id: "invoice-1", number_system: "1001", xml_key: keys[0] }),
+          makeInvoice({ id: "invoice-2", number_system: "1002", xml_key: keys[1] }),
+        ]);
+        (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue([]);
+        (pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock).mockResolvedValue(undefined);
+        // invoice-1 é da loja; invoice-2 é transbordo.
+        (assertTransshipment as jest.Mock).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-1" } as any);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-1", status: "OPEN", mode: "REGULAR", transporters_id: null } as any);
+        (batchInvoicesService.createBatchInvoiceWithItems as jest.Mock).mockResolvedValue({ volumesAdded: 2 });
+        jest.spyOn(service, "increment").mockResolvedValue(undefined);
+        (invoiceService as any).updateInvoices = jest.fn().mockResolvedValue(undefined);
+        jest.spyOn((service as any).repository, "getFullBatch").mockResolvedValue({ id: "batch-1" });
+      });
+
+      it("lote misto: marca só a nota de transbordo e a escrita de atributos dela vai só na linha do type do lote", async () => {
+        (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([]);
+
+        await service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-1");
+
+        expect(assertTransshipment).toHaveBeenCalledWith(
+          expect.objectContaining({ id: "invoice-2" }),
+          expect.anything(),
+          "OUTGOING",
+          mockTransaction,
+        );
+        expect(batchInvoicesService.createBatchInvoiceWithItems).toHaveBeenCalledWith(
+          "batch-1",
+          expect.any(Array),
+          mockTransaction,
+          new Set(["invoice-2"]),
+        );
+        expect((invoiceService as any).updateInvoices).toHaveBeenLastCalledWith(
+          ["invoice-1", "invoice-2"],
+          "ub-1",
+          expect.objectContaining({ batch_generated: true, status: "PENDING" }),
+          batchAttributeWhere("OUTGOING", ["invoice-2"]),
+          mockTransaction,
+        );
+      });
+
+      it("nota de transbordo já no lote de ENTRADA da loja não conflita com o lote de expedição", async () => {
+        (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([
+          { invoice_id: "invoice-2", expedition_batch_id: "batch-in", batch: { type: "INCOMING" } },
+        ]);
+
+        await expect(
+          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-1"),
+        ).resolves.toBeDefined();
+      });
+
+      it("nota da própria loja em lote de outro type da loja continua conflitando (regra de sempre)", async () => {
+        (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([
+          { invoice_id: "invoice-1", expedition_batch_id: "batch-in", batch: { type: "INCOMING" } },
+        ]);
+
+        await expect(
+          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-1"),
+        ).rejects.toThrow("Nota(s) 1001 já pertence(m) a outro lote nesta unidade");
       });
     });
 
@@ -837,5 +908,188 @@ describe("ExpeditionBatchService — conciliação dos produtos na Bling (lote d
         "Nota(s) não encontrada(s): CHAVE-1",
       );
     });
+  });
+});
+
+describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR do romaneio", () => {
+  let service: ExpeditionBatchService;
+  const STORE_CNPJ = "11111111000111";
+  const OTHER_A = "22222222000122";
+  const OTHER_B = "33333333000133";
+
+  const invoice = (id: string, number: string, sender: string, receiver: string) => ({
+    id,
+    number_system: number,
+    sender_cnpj: sender,
+    receiver_cnpj: receiver,
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new ExpeditionBatchService();
+    jest
+      .spyOn(service, "findById")
+      .mockResolvedValue({ id: "src-batch", type: "OUTGOING", unit_business_id: "ub-sender" } as any);
+    (batchInvoicesService as any).findAll = jest
+      .fn()
+      .mockResolvedValue([{ invoice_id: "inv-1" }, { invoice_id: "inv-2" }]);
+    (batchInvoicesService as any).findBatchIdsByInvoiceIds = jest.fn().mockResolvedValue(new Map());
+    (unitBusinessService as any).findById = jest
+      .fn()
+      .mockResolvedValue({ id: "ub-1", cnpj: STORE_CNPJ, transshipment_allowed: true });
+    jest.spyOn(service, "generateBatchFromInvoices").mockResolvedValue({ id: "new-batch" } as any);
+  });
+
+  it("loja destinatária das notas → lote de entrada com as notas do romaneio", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", OTHER_A, STORE_CNPJ),
+      invoice("inv-2", "1002", OTHER_A, STORE_CNPJ),
+    ]);
+
+    await service.generateBatchFromQrCode("src-batch", "ub-1", undefined, "REGULAR", "job-1");
+
+    expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
+      ["inv-1", "inv-2"],
+      "ub-1",
+      "INCOMING",
+      "REGULAR",
+      "job-1",
+    );
+  });
+
+  it("loja emissora das notas → lote de expedição", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", STORE_CNPJ, OTHER_A),
+      invoice("inv-2", "1002", STORE_CNPJ, OTHER_B),
+    ]);
+
+    await service.generateBatchFromQrCode("src-batch", "ub-1");
+
+    expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
+      ["inv-1", "inv-2"], "ub-1", "OUTGOING", undefined, undefined,
+    );
+  });
+
+  it("transbordo sem lote de entrada na loja → entrada; com lote de entrada → expedição", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", OTHER_A, OTHER_B),
+      invoice("inv-2", "1002", OTHER_A, OTHER_B),
+    ]);
+
+    await service.generateBatchFromQrCode("src-batch", "ub-1");
+    expect((service.generateBatchFromInvoices as jest.Mock).mock.calls[0][2]).toBe("INCOMING");
+    expect(batchInvoicesService.findBatchIdsByInvoiceIds).toHaveBeenCalledWith(
+      ["inv-1", "inv-2"], "ub-1", "INCOMING",
+    );
+
+    (batchInvoicesService.findBatchIdsByInvoiceIds as jest.Mock).mockResolvedValue(
+      new Map([["inv-1", "in-batch"], ["inv-2", "in-batch"]]),
+    );
+    await service.generateBatchFromQrCode("src-batch", "ub-1");
+    expect((service.generateBatchFromInvoices as jest.Mock).mock.calls[1][2]).toBe("OUTGOING");
+  });
+
+  it("sem tipo, transbordo com e sem lote de entrada → erro com os números de cada tipo", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", OTHER_A, OTHER_B),
+      invoice("inv-2", "1002", OTHER_A, OTHER_B),
+    ]);
+    (batchInvoicesService.findBatchIdsByInvoiceIds as jest.Mock).mockResolvedValue(new Map([["inv-2", "in-batch"]]));
+
+    await expect(service.generateBatchFromQrCode("src-batch", "ub-1")).rejects.toThrow(
+      "As notas do romaneio não são do mesmo tipo de lote nesta loja: entrada 1001; expedição 1002.",
+    );
+    expect(service.generateBatchFromInvoices).not.toHaveBeenCalled();
+  });
+
+  it("CD na chegada: nota destinada a ele + transbordo → entrada com todas as notas", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", OTHER_A, STORE_CNPJ),
+      invoice("inv-2", "1002", OTHER_A, OTHER_B),
+    ]);
+
+    await service.generateBatchFromQrCode("src-batch", "ub-1");
+
+    expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
+      ["inv-1", "inv-2"], "ub-1", "INCOMING", undefined, undefined,
+    );
+  });
+
+  it.each([undefined, "OUTGOING" as const])(
+    "CD reenviando (tipo %s): nota destinada ao CD termina nele e fica fora da expedição",
+    async (requestedType) => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        invoice("inv-1", "1001", OTHER_A, STORE_CNPJ),
+        invoice("inv-2", "1002", OTHER_A, OTHER_B),
+      ]);
+      (batchInvoicesService.findBatchIdsByInvoiceIds as jest.Mock).mockResolvedValue(
+        new Map([["inv-1", "in-batch"], ["inv-2", "in-batch"]]),
+      );
+
+      await service.generateBatchFromQrCode("src-batch", "ub-1", requestedType);
+
+      expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
+        ["inv-2"], "ub-1", "OUTGOING", undefined, undefined,
+      );
+    },
+  );
+
+  it("tela de expedição com romaneio só de notas recebidas pela loja → erro, sem gerar lote", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", OTHER_A, STORE_CNPJ),
+      invoice("inv-2", "1002", OTHER_A, STORE_CNPJ),
+    ]);
+    (batchInvoicesService.findBatchIdsByInvoiceIds as jest.Mock).mockResolvedValue(
+      new Map([["inv-1", "in-batch"], ["inv-2", "in-batch"]]),
+    );
+
+    await expect(service.generateBatchFromQrCode("src-batch", "ub-1", "OUTGOING")).rejects.toThrow(
+      "As notas 1001, 1002 são de entrada nesta loja. Use a tela de entrada.",
+    );
+    expect(service.generateBatchFromInvoices).not.toHaveBeenCalled();
+  });
+
+  it("tela de entrada com nota emitida pela loja → erro, sem gerar lote", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", STORE_CNPJ, OTHER_A),
+      invoice("inv-2", "1002", OTHER_A, STORE_CNPJ),
+    ]);
+
+    await expect(service.generateBatchFromQrCode("src-batch", "ub-1", "INCOMING")).rejects.toThrow(
+      "As notas 1001 são de expedição nesta loja. Use a tela de expedição.",
+    );
+    expect(service.generateBatchFromInvoices).not.toHaveBeenCalled();
+  });
+
+  it("tipo pedido pela tela é respeitado: expedição pedida não vira entrada (a trava de entrada finalizada barra)", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      invoice("inv-1", "1001", OTHER_A, OTHER_B),
+      invoice("inv-2", "1002", OTHER_A, OTHER_B),
+    ]);
+    (service.generateBatchFromInvoices as jest.Mock).mockRejectedValue(
+      new Error("Nota 1001 ainda não foi recebida nesta loja. Finalize o lote de entrada antes de gerar o de expedição."),
+    );
+
+    await expect(
+      service.generateBatchFromQrCode("src-batch", "ub-1", "OUTGOING"),
+    ).rejects.toThrow("Nota 1001 ainda não foi recebida nesta loja.");
+
+    expect(service.generateBatchFromInvoices).toHaveBeenCalledTimes(1);
+    expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
+      ["inv-1", "inv-2"], "ub-1", "OUTGOING", undefined, undefined,
+    );
+  });
+
+  it("QR de lote que não é de expedição, ou da própria loja → erro sem gerar lote", async () => {
+    (service.findById as jest.Mock).mockResolvedValueOnce({ id: "src", type: "INCOMING", unit_business_id: "ub-x" });
+    await expect(service.generateBatchFromQrCode("src", "ub-1")).rejects.toThrow(
+      "O QR lido não é de um romaneio de expedição.",
+    );
+
+    (service.findById as jest.Mock).mockResolvedValueOnce({ id: "src", type: "OUTGOING", unit_business_id: "ub-1" });
+    await expect(service.generateBatchFromQrCode("src", "ub-1")).rejects.toThrow(
+      "Este romaneio é desta própria loja.",
+    );
+    expect(service.generateBatchFromInvoices).not.toHaveBeenCalled();
   });
 });
