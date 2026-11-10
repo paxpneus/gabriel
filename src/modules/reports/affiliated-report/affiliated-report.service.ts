@@ -1,3 +1,5 @@
+import { cachedReport, REPORT_CACHE_NAMES } from "../helpers/report-cache";
+import redisService from "../../../shared/utils/base-models/base-redis";
 import { Op } from "sequelize";
 import { contactService } from "../../sales/contacts";
 import { AFFILIATED_CONTACT_TYPE } from "../../sales/contacts/contacts.types";
@@ -11,6 +13,12 @@ import {
   AffiliatedReportProduct,
   AffiliatedReportRankingProduct,
 } from "./affiliated-report.types";
+
+// Intervalo mínimo entre atualizações do mesmo afiliado (recálculo sob demanda é pesado).
+const AFFILIATED_REFRESH_COOLDOWN_SECONDS = 10 * 60;
+
+// Fora do prefixo report:affiliated-report:* — a invalidação do job de vendedores não pode zerar a trava.
+const affiliatedRefreshLockKey = (userId: string) => `report-refresh-lock:affiliated-report:${userId}`;
 
 // Valores em centavos inteiros: somas sem resíduo de ponto flutuante.
 const toCents = (value: string | number | null | undefined): number => Math.round(Number(value ?? 0) * 100);
@@ -105,6 +113,62 @@ function rankingProduct(product: AffiliatedReportProduct | null | undefined): Af
 // Relatório do próprio afiliado logado (login de afiliado), na base do seller report.
 export class AffiliatedReportService {
   constructor(private readonly repository: AffiliatedReportRepository = affiliatedReportRepository) {}
+
+  /** getReport com cache Redis de 1h por usuário + período; `cache.refresh_available_at` = quando o afiliado pode atualizar de novo. */
+  async getCachedReport(
+    userId: string,
+    startDate: string,
+    endDate: string,
+    refresh = false,
+  ) {
+    const [report, lockedUntil] = await Promise.all([
+      cachedReport(
+        REPORT_CACHE_NAMES.affiliatedReport,
+        { userId, startDate, endDate },
+        () => this.getReport(userId, startDate, endDate),
+        refresh,
+      ),
+      redisService.get<string>(affiliatedRefreshLockKey(userId)),
+    ]);
+    if (!report) return null;
+    return {
+      ...report,
+      cache: { ...report.cache, refresh_available_at: lockedUntil ?? new Date().toISOString() },
+    };
+  }
+
+  /** Atualizar do afiliado (POST /refresh): no máximo 1 vez a cada 10 min por afiliado, qualquer período; travado → refreshAvailableAt (ISO). */
+  async refreshReport(
+    userId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<{ report: Awaited<ReturnType<AffiliatedReportService["getCachedReport"]>>; refreshAvailableAt?: string }> {
+    // Libera no minuto cheio seguinte aos 10 min: o horário exibido (HH:mm) é exatamente quando o botão volta.
+    const key = affiliatedRefreshLockKey(userId);
+    const availableAtMs = Math.ceil((Date.now() + AFFILIATED_REFRESH_COOLDOWN_SECONDS * 1000) / 60000) * 60000;
+    // SET NX atômico: dois cliques simultâneos não passam juntos; o valor é a hora em que a trava acaba.
+    const acquired = await redisService.set(key, new Date(availableAtMs).toISOString(), {
+      mode: "EX",
+      duration: Math.ceil((availableAtMs - Date.now()) / 1000),
+      condition: "NX",
+    });
+
+    if (acquired === null) {
+      // Trava expirou entre o SET e o GET: libera agora, o próximo clique já passa.
+      const lockedUntil = await redisService.get<string>(key);
+      return { report: null, refreshAvailableAt: lockedUntil ?? new Date().toISOString() };
+    }
+
+    // Falha no cálculo ou usuário que não é afiliado não consome a janela de 10 min.
+    try {
+      const report = await this.getCachedReport(userId, startDate, endDate, true);
+      if (!report) await redisService.delete(key);
+      return { report };
+    } catch (error) {
+      await redisService.delete(key);
+      throw error;
+    }
+  }
 
   /** Escopo pelo contato AFFILIATED do usuário logado (nunca por id do request); null = usuário não é afiliado. */
   async getReport(userId: string, startDate: string, endDate: string): Promise<AffiliatedReport | null> {

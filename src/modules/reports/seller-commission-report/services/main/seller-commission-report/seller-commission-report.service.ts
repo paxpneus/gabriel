@@ -1,3 +1,4 @@
+import { cachedReport, REPORT_CACHE_NAMES } from "../../../../helpers/report-cache";
 import { Op } from "sequelize";
 import productService from "../../../../../inventory/products/services/product.service";
 import {
@@ -14,6 +15,11 @@ export class SellerCommissionReportService {
   constructor(
     private readonly repository: SellerCommissionReportRepository = sellerCommissionReportRepository,
   ) {}
+
+  /** getReport com cache Redis de 1h por filtro; refresh=true recalcula e regrava (rota /refresh). */
+  async getCachedReport(params: SellerCommissionReportParams, refresh = false) {
+    return cachedReport(REPORT_CACHE_NAMES.sellerCommissionReport, params, () => this.getReport(params), refresh);
+  }
 
   /** Comissão de vendedor e gerente dos pedidos faturados do seller report, pela data do pedido (mesma base do seller report). */
   async getReport(params: SellerCommissionReportParams): Promise<SellerCommissionReport> {

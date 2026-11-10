@@ -1,3 +1,4 @@
+import { cachedReport, invalidateReportCache, REPORT_CACHE_NAMES } from "../../helpers/report-cache";
 import {
   DailyOperationJobResult,
   DailyOperationReportFilters,
@@ -60,6 +61,9 @@ export class DailyOperationReportService {
         affectedKeys.length,
       );
 
+      // Snapshots/facts mudaram: próxima leitura recalcula em vez de servir o cache de até 1h.
+      await invalidateReportCache(REPORT_CACHE_NAMES.dailyOperationReport);
+
       return {
         jobName: JOB_NAME,
         startedAt: jobStartTime,
@@ -71,6 +75,11 @@ export class DailyOperationReportService {
       await dailyOperationReportRepository.markFailed(err);
       throw err;
     }
+  }
+
+  /** getReport com cache Redis de 1h por filtro; o job (/run e fila de 1h) invalida ao terminar. */
+  async getCachedReport(filters: DailyOperationReportFilters) {
+    return cachedReport(REPORT_CACHE_NAMES.dailyOperationReport, filters, () => this.getReport(filters));
   }
 
   async getReport(filters: DailyOperationReportFilters) {

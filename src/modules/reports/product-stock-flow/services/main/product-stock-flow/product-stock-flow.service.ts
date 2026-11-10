@@ -1,3 +1,4 @@
+import { cachedReport, REPORT_CACHE_NAMES } from "../../../../helpers/report-cache";
 import { Op } from "sequelize";
 import {
   endOfDayTz,
@@ -25,6 +26,11 @@ export class ProductStockFlowService {
   constructor(
     private readonly repository: ProductStockFlowRepository = productStockFlowRepository,
   ) {}
+
+  /** getReport com cache Redis de 1h por filtro; refresh=true recalcula e regrava (rota /refresh). */
+  async getCachedReport(params: ProductStockFlowParams, refresh = false) {
+    return cachedReport(REPORT_CACHE_NAMES.productStockFlow, params, () => this.getReport(params), refresh);
+  }
 
   async getReport(
     params: ProductStockFlowParams,

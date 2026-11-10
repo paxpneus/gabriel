@@ -1,3 +1,4 @@
+import { cachedReport, REPORT_CACHE_NAMES } from "../../../../helpers/report-cache";
 import { QueryParams } from "../../../../../../shared/query/query.types";
 import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import { SaleTransferInvoiceReport } from "../../../models/sale-transfer-invoice-report.types";
@@ -18,6 +19,20 @@ export class SaleTransferInvoiceReportService {
   constructor(
     private readonly repository: SaleTransferInvoiceReportRepository = saleTransferInvoiceReportRepository,
   ) {}
+
+  /** getReport com cache Redis de 1h por filtro + loja do escopo; refresh=true recalcula e regrava (rota /refresh). */
+  async getCachedReport(
+    params: QueryParams,
+    unitBusinessId: string,
+    refresh = false,
+  ) {
+    return cachedReport(
+      REPORT_CACHE_NAMES.saleTransferInvoiceReport,
+      { params, unitBusinessId },
+      () => this.getReport(params, unitBusinessId),
+      refresh,
+    );
+  }
 
   async getReport(
     params: QueryParams,

@@ -38,7 +38,7 @@ class SellerSalesReportController {
 
   index = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const report = await SellerSalesReportService.getReport({
+      const report = await SellerSalesReportService.getCachedReport({
         startDate: String(req.query.dateFrom ?? req.query.start_date ?? ""),
         endDate: String(req.query.dateTo ?? req.query.end_date ?? ""),
         userId: (req.query.userId ?? undefined) as string | undefined,

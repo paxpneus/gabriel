@@ -31,6 +31,7 @@ type Scopes =
   | 'PDV CD21'
   | 'Confirmar EAN físico'
   | 'Criar e mapear produto na nota'
+  | 'Atualizar relatórios'
   | 'Contatos'
   | 'Cupons'
 
@@ -55,6 +56,9 @@ export const PHYSICAL_EAN_OWNER_ENTITY = 'physical_ean_owner'
 
 // Entidade RBAC de criar/mapear produto na nota (create-product-and-map e /add/item) — usada no CUSTOM_ROUTE_MAP.
 export const INVOICE_PRODUCT_MAPPING_ENTITY = 'invoice_product_mapping'
+
+// Entidade RBAC do botão "Atualizar" dos relatórios (/refresh e /run) — usada no CUSTOM_ROUTE_MAP.
+export const REPORT_REFRESH_ENTITY = 'report_refresh'
 
 export const ROLE_PERMISSIONS: Roles[] = [
     {
@@ -305,6 +309,14 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Criar e mapear produto na nota',
     entity: INVOICE_PRODUCT_MAPPING_ENTITY,
+    route: '',
+    type: 'CUSTOM',
+    permissions: ['write'],
+  },
+  // Botão "Atualizar" dos relatórios (recalcula ignorando o cache de 1h / roda o job): admin/developer sempre; outros papéis só com essa permissão.
+  {
+    scope: 'Atualizar relatórios',
+    entity: REPORT_REFRESH_ENTITY,
     route: '',
     type: 'CUSTOM',
     permissions: ['write'],

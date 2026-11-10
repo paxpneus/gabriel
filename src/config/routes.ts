@@ -1,7 +1,7 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
-import { INVOICE_PRODUCT_MAPPING_ENTITY, PHYSICAL_EAN_OWNER_ENTITY } from "../shared/constants/roles";
+import { INVOICE_PRODUCT_MAPPING_ENTITY, PHYSICAL_EAN_OWNER_ENTITY, REPORT_REFRESH_ENTITY } from "../shared/constants/roles";
 
 const router = Router();
 const modulesPath = path.resolve(__dirname, "..", "modules");
@@ -72,10 +72,18 @@ function getApiBaseSegment(originalUrl: string): string | null {
 }
 
 const CUSTOM_ROUTE_MAP: Record<string, string> = {
-  
+  // Botão "Atualizar" dos relatórios: antes das rotas dos relatórios (casa por substring, 1º que bater vence).
+  "integration-problems-report/refresh": REPORT_REFRESH_ENTITY,
+  "product-stock-flow/refresh": REPORT_REFRESH_ENTITY,
+  "sales-invoiced-report/refresh": REPORT_REFRESH_ENTITY,
+  "sales-return-report/refresh": REPORT_REFRESH_ENTITY,
+  "sale-transfer-invoice-report/refresh": REPORT_REFRESH_ENTITY,
+  "seller-commission-report/refresh": REPORT_REFRESH_ENTITY,
+  "sales-report/run": REPORT_REFRESH_ENTITY,
+  "seller-report/run": REPORT_REFRESH_ENTITY,
+  "daily-operation-report/run": REPORT_REFRESH_ENTITY,
   "financial-batch-info": "financial-pdt",
   "sales-report": "financial-pdt",
-  "sales-report/run" : "financial-pdt",
   "product-stock-flow": "financial-pdt",
   "sales-invoiced-report": "financial-pdt",
   "sales-return-report": "financial-pdt",
