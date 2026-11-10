@@ -110,6 +110,23 @@ describe("BlingOrderService.syncOrderIntegrationMappings", () => {
     expect(mockMagentoQueueAdd).not.toHaveBeenCalled();
   });
 
+  it("import manual (refetchCoupon) com mapping Magento existente: reenfileira o fetch-order sem recriar mapping", async () => {
+    (integrationMappingService.findOne as jest.Mock).mockResolvedValue({ id: "map-1" });
+
+    await service.syncOrderIntegrationMappings(
+      ORDER_ID,
+      { id: 987, numeroLoja: "000001271_631" },
+      BLING_INTEGRATION_ID,
+      true,
+    );
+
+    expect(integrationMappingService.createOrUpdateIntegrationMapping).toHaveBeenCalledTimes(1);
+    expect(mockMagentoQueueAdd).toHaveBeenCalledWith(
+      { kind: "fetch-order", orderId: ORDER_ID, magentoOrderId: "631" },
+      `magento-fetch-order-${ORDER_ID}`,
+    );
+  });
+
   it.each([["MLB123456"], [""], [null], ["1271_"]])(
     "numeroLoja fora do padrão (%p): só o mapping Bling",
     async (numeroLoja) => {

@@ -49,19 +49,90 @@ describe("AffiliatedReportService", () => {
     });
   });
 
-  it("returns only sale value, products and commission per order, with the commission total", async () => {
-    repository.findOrders.mockResolvedValue([
-      { order_id: "o1", order_date: "2026-10-05", order_number: "1001", total_sold: "100.10", commission: "5.01", products: [{ name: "Pneu A", quantity: 2 }] },
-      { order_id: "o2", order_date: "2026-10-04", order_number: "1000", total_sold: "200.20", commission: "0.00", products: [{ name: "Pneu B", quantity: 1 }] },
-    ]);
+  const item = (overrides: Record<string, unknown>) => ({
+    product_id: "p1", name: "Pneu A", brand: "Marca", measure: "175/70R13",
+    quantity: 1, gross_total: 0, net_total: 0, commission: 0, ...overrides,
+  });
+  const rows = [
+    {
+      order_id: "o1", order_date: "2026-11-03", order_number: "1001", coupon_code: "GABS10",
+      gross_total: "100.00", net_total: "90.00", commission: "9.00", commission_rate: "10.00",
+      invoiced: true,
+      items: [
+        item({ quantity: 2, gross_total: 60, net_total: 54, commission: 5.4 }),
+        item({ product_id: "p2", name: "Pneu B", gross_total: 40, net_total: 36, commission: 3.6 }),
+      ],
+    },
+    {
+      order_id: "o2", order_date: "2026-11-01", order_number: "1000", coupon_code: "GABS10",
+      gross_total: "50.10", net_total: "50.10", commission: "0.00", commission_rate: "10.00",
+      invoiced: false,
+      items: [item({ product_id: "p2", name: "Pneu B", quantity: 1, gross_total: 50.1, net_total: 50.1 })],
+    },
+  ];
 
-    const report = await service.getReport("user-1", "2026-10-01", "2026-10-31");
+  it("shows gross − discount = net and net × rate = commission per order, with invoiced flag", async () => {
+    repository.findOrders.mockResolvedValue(rows);
 
-    expect(report?.summary).toEqual({ total_commission: 5.01 });
-    expect(report?.orders).toEqual([
-      { order_id: "o1", order_date: "2026-10-05", order_number: "1001", total_sold: 100.1, commission: 5.01, products: [{ name: "Pneu A", quantity: 2 }] },
-      { order_id: "o2", order_date: "2026-10-04", order_number: "1000", total_sold: 200.2, commission: 0, products: [{ name: "Pneu B", quantity: 1 }] },
+    const report = await service.getReport("user-1", "2026-11-01", "2026-11-30");
+
+    expect(report?.orders[0]).toEqual({
+      order_id: "o1", order_date: "2026-11-03", order_number: "1001", coupon_code: "GABS10",
+      gross_total: 100, discount_value: 10, net_total: 90,
+      commission_rate: 10, commission: 9, invoiced: true,
+      products: [{ name: "Pneu A", quantity: 2 }, { name: "Pneu B", quantity: 1 }],
+    });
+    expect(report?.orders[1]).toEqual(expect.objectContaining({ commission: 0, invoiced: false, discount_value: 0 }));
+  });
+
+  it("summary: commission_pct only over invoiced orders", async () => {
+    repository.findOrders.mockResolvedValue(rows);
+
+    const report = await service.getReport("user-1", "2026-11-01", "2026-11-30");
+
+    expect(report?.summary).toEqual({
+      orders_count: 2,
+      gross_total: 150.1,
+      discount_total: 10,
+      net_total: 140.1,
+      total_commission: 9,
+      commission_pct: 10,
+    });
+  });
+
+  it("evolution by day, week (Monday) and month", async () => {
+    repository.findOrders.mockResolvedValue(rows);
+
+    const report = await service.getReport("user-1", "2026-11-01", "2026-11-30");
+
+    expect(report?.evolution.daily.map((point) => point.period)).toEqual(["2026-11-01", "2026-11-03"]);
+    // 2026-11-01 é domingo (semana de 26/10); 03/11 é terça (semana de 02/11).
+    expect(report?.evolution.weekly.map((point) => point.period)).toEqual(["2026-10-26", "2026-11-02"]);
+    expect(report?.evolution.monthly).toEqual([
+      { period: "2026-11-01", orders_count: 2, gross_total: 150.1, discount_total: 10, net_total: 140.1, commission: 9 },
     ]);
+  });
+
+  it("products summed across orders, by quantity desc; ranking and by_coupon", async () => {
+    repository.findOrders.mockResolvedValue(rows);
+
+    const report = await service.getReport("user-1", "2026-11-01", "2026-11-30");
+
+    expect(report?.products).toEqual([
+      { product_id: "p1", product_name: "Pneu A", product_brand: "Marca", product_measure: "175/70R13", quantity: 2, gross_total: 60, discount_value: 6, net_total: 54, commission_value: 5.4 },
+      { product_id: "p2", product_name: "Pneu B", product_brand: "Marca", product_measure: "175/70R13", quantity: 2, gross_total: 90.1, discount_value: 4, net_total: 86.1, commission_value: 3.6 },
+    ]);
+    const pneuA = { product_id: "p1", product_name: "Pneu A", product_brand: "Marca", product_measure: "175/70R13", quantity: 2, commission_value: 5.4 };
+    expect(report?.ranking).toEqual({ most_sold_product: pneuA, highest_commission_product: pneuA });
+    expect(report?.by_coupon).toEqual([{ code: "GABS10", orders_count: 2, net_total: 140.1, commission: 9 }]);
+  });
+
+  it("empty period: zeros, no division by zero, null ranking", async () => {
+    const report = await service.getReport("user-1", "2026-11-01", "2026-11-30");
+
+    expect(report?.summary).toEqual(expect.objectContaining({ commission_pct: 0, orders_count: 0 }));
+    expect(report?.ranking).toEqual({ most_sold_product: null, highest_commission_product: null });
+    expect(report?.evolution).toEqual({ daily: [], weekly: [], monthly: [] });
   });
 
   it("lists only active coupons of active links, with their commission rate", async () => {

@@ -14,3 +14,19 @@ export const CreateContactWithUserSchema = z.object({
 });
 
 export type CreateContactWithUserInput = z.infer<typeof CreateContactWithUserSchema>;
+
+// Status do usuário na tela (users.active): "Inativo" bloqueia o login sem apagar o cadastro.
+export const CONTACT_USER_STATUSES = ["Ativo", "Inativo"] as const;
+
+// PUT /contacts/:id/with-user: tudo opcional; nome vale pro contato e pro usuário; senha só muda se vier.
+export const UpdateContactWithUserSchema = z
+  .object({
+    name: RequiredUserFields.name.optional(),
+    email: RequiredUserFields.email.optional(),
+    password: RequiredUserFields.password.optional(),
+    phone: phoneField,
+    status: z.enum(CONTACT_USER_STATUSES, { error: "Status deve ser Ativo ou Inativo" }).optional(),
+  })
+  .strict();
+
+export type UpdateContactWithUserInput = z.infer<typeof UpdateContactWithUserSchema>;

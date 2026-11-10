@@ -45,6 +45,7 @@ OrderCoupon.init(
       onUpdate: "CASCADE",
       onDelete: "RESTRICT",
     },
+    // Desconto total do pedido na Magento (todas as regras: cupom + PIX etc.), que ela só entrega somado.
     discount_amount: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,

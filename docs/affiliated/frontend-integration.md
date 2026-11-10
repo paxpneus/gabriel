@@ -2,7 +2,7 @@
 
 Afiliado é um contato (`type: "AFFILIATED"`) com login próprio. Ele ganha comissão nos pedidos do site (Magento) feitos com um cupom vinculado a ele. Esta entrega traz:
 
-1. **Cadastro de afiliado** (contato + usuário de uma vez): `POST /api/contacts/with-user`
+1. **Cadastro de afiliado** (contato + usuário de uma vez): `POST /api/contacts/with-user`; edição: `GET /api/contacts/:id` e `PUT /api/contacts/:id/with-user`
 2. **Login do afiliado**: `POST /api/contacts/affiliated/login` e `GET /api/contacts/affiliated/me`
 3. **Cupons**: `/api/coupons`
 4. **Vínculo afiliado ↔ cupom**: `/api/contact-coupons`
@@ -32,6 +32,7 @@ Admin e developer têm acesso total, como sempre.
 | Vincular / transferir cupom; criar cupom | `coupons` | `write` |
 | Editar taxa, ativar/inativar vínculo ou cupom | `coupons` | `update` |
 | Cadastro de afiliado (`/with-user`) | `contacts` | `write` |
+| Editar afiliado e o usuário dele (`PUT /:id/with-user`) | `contacts` | `update` |
 
 "Cupons de Afiliado" (`contact_coupons`) não tem entrada própria: herda de `coupons`. Usuário com `type` `admin` ou `developer` tem acesso a tudo, mesmo sem a entrada no papel.
 
@@ -74,6 +75,34 @@ A senha nunca volta na resposta.
 
 - `id_system` do contato agora pode vir `null`: contato criado por aqui não existe no Bling. Telas que exibem esse campo precisam tratar o vazio.
 - O usuário ganhou `phone` (opcional, até 20 caracteres) no cadastro e na edição normais de usuário.
+
+### Edição: `GET /api/contacts/:id` e `PUT /api/contacts/:id/with-user`
+
+**`GET /api/contacts/:id`** passa a trazer o usuário do contato, ou `null` quando o contato não tem usuário:
+
+```json
+{ "id": "uuid", "name": "Fulano", "type": "AFFILIATED", "...": "...", "user": { "id": "uuid", "email": "fulano@x.com", "phone": null, "status": "Ativo" } }
+```
+
+`status` é `"Ativo"` ou `"Inativo"`.
+
+**`PUT /api/contacts/:id/with-user`** atualiza o contato e o usuário numa transação só: ou os dois mudam, ou nenhum. Todos os campos são opcionais; mande só o que mudou.
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `name` | string | 3 a 255 caracteres. Grava no contato e no usuário, que ficam com o mesmo nome. |
+| `email` | string | É o login. |
+| `phone` | string \| null | Até 20 caracteres; `null` apaga. |
+| `password` | string | Mínimo 8 caracteres. Só muda se vier: serve para redefinir a senha do afiliado. |
+| `status` | `"Ativo"` \| `"Inativo"` | `"Inativo"` bloqueia o login sem apagar o cadastro; `"Ativo"` libera de novo. |
+
+Campo fora da lista é recusado (CPF e loja não mudam por aqui).
+
+**Resposta `200`**: o mesmo corpo do `GET /api/contacts/:id`, já atualizado.
+
+**Erros**: `404` contato não existe; `400` "Este contato não tem usuário para editar", "Outro usuário já possui este email". Campo inválido volta no formato da validação: `{ "success": false, "message": "Erro na validação dos dados", "errors": [{ "field", "message" }] }`.
+
+Inativar bloqueia **novos** logins. Uma sessão que já está aberta continua valendo até o token expirar.
 
 ---
 
@@ -197,7 +226,7 @@ Aceito em `GET /api/sales-report` e `GET /api/seller-report`. Recebe ids de cont
 
 ## 6. Relatório do afiliado: `GET /api/affiliated-report`
 
-É a tela do **afiliado logado** (login de afiliado). Ele vê as próprias vendas e a própria comissão, e nada além disso: nenhum dado de cliente, custo, lucro ou da empresa.
+É a tela do **afiliado logado** (login de afiliado). Ele vê as próprias vendas e a própria comissão, e nada além disso: nenhum dado de cliente, custo, markup, margem ou lucro.
 
 - **Autenticação:** o cookie `token` do login de afiliado.
 - **Escopo:** o backend descobre o afiliado pelo usuário logado. A rota não aceita id de afiliado, então um afiliado nunca vê as vendas de outro.
@@ -209,34 +238,89 @@ Aceito em `GET /api/sales-report` e `GET /api/seller-report`. Recebe ids de cont
 
 ```json
 {
-  "summary": { "total_commission": 215.5 },
-  "coupons": [
-    { "code": "FULANO5", "commission_rate": 5 }
-  ],
+  "summary": {
+    "orders_count": 12,
+    "gross_total": 4400.0,
+    "discount_total": 90.0,
+    "net_total": 4310.0,
+    "total_commission": 215.5,
+    "commission_pct": 5
+  },
+  "coupons": [{ "code": "FULANO5", "commission_rate": 5 }],
   "orders": [
     {
       "order_id": "uuid",
       "order_date": "2026-10-05",
       "order_number": "100045678",
-      "total_sold": 1250.9,
+      "coupon_code": "FULANO5",
+      "gross_total": 1300.0,
+      "discount_value": 49.1,
+      "net_total": 1250.9,
+      "commission_rate": 5,
       "commission": 62.55,
-      "products": [
-        { "name": "Pneu 205/55 R16 ...", "quantity": 4 }
-      ]
+      "invoiced": true,
+      "products": [{ "name": "Pneu 205/55 R16 ...", "quantity": 4 }]
     }
-  ]
+  ],
+  "evolution": {
+    "daily":   [{ "period": "2026-10-05", "orders_count": 1, "gross_total": 1300.0, "discount_total": 49.1, "net_total": 1250.9, "commission": 62.55 }],
+    "weekly":  [],
+    "monthly": []
+  },
+  "products": [
+    {
+      "product_id": "uuid", "product_name": "Pneu 205/55 R16 ...", "product_brand": "Marca", "product_measure": "205/55R16",
+      "quantity": 4, "gross_total": 1300.0, "discount_value": 49.1, "net_total": 1250.9, "commission_value": 62.55
+    }
+  ],
+  "ranking": {
+    "most_sold_product": {
+      "product_id": "uuid", "product_name": "Pneu 205/55 R16 ...", "product_brand": "Marca", "product_measure": "205/55R16",
+      "quantity": 4, "commission_value": 62.55
+    },
+    "highest_commission_product": {
+      "product_id": "uuid", "product_name": "Pneu 205/55 R16 ...", "product_brand": "Marca", "product_measure": "205/55R16",
+      "quantity": 4, "commission_value": 62.55
+    }
+  },
+  "by_coupon": [{ "code": "FULANO5", "orders_count": 12, "net_total": 4310.0, "commission": 215.5 }]
 }
 ```
 
-- `summary.total_commission`: soma da comissão do afiliado no período.
-- `coupons`: cupons **ativos** do afiliado com a taxa de comissão em percentual (`5` = 5%). Não depende do período: mostra o que vale hoje. Cupom inativado, ou vínculo transferido para outro afiliado, não aparece.
-- `orders`: um item por pedido, do mais recente para o mais antigo.
-  - `order_number` é o número do pedido no site.
-  - `total_sold` é o valor da venda, já com desconto.
-  - `products` traz nome e quantidade.
-  - `commission` é a comissão dele naquele pedido.
-- **Pedido ainda não faturado:** aparece na lista com `commission: 0`. A comissão entra quando o pedido é faturado, no próximo processamento dos relatórios.
-- **Taxa e comissão podem não bater:** a comissão de cada pedido é a que foi congelada quando o pedido entrou, então pode ser diferente da taxa atual do cupom.
+**A conta, que o back já entrega pronta:** `gross_total − discount_value = net_total` e `net_total × commission_rate / 100 = commission`.
+
+- **Bruto (`gross_total`):** a soma dos produtos do pedido, sem frete.
+- **Desconto (`discount_value` / `discount_total`):** é exatamente o que sai da base da comissão: o desconto total do pedido, com todas as regras somadas (cupom, PIX etc.). O site manda esses descontos somados e não separa por regra. Desconto informado por item no ERP não conta.
+- **Líquido (`net_total`):** a base da comissão.
+- **Frete:** não entra na base nem nessa resposta.
+- **Mudança:** o `total_sold` de cada pedido foi substituído por `net_total`.
+
+**`summary`**
+- `total_commission`: soma da comissão do período.
+- `commission_pct`: comissão ÷ líquido, em percentual (`5` = 5%), calculado **só com os pedidos faturados**. Sem pedido faturado, vem `0`.
+
+**`orders`**: um item por pedido, do mais recente para o mais antigo.
+- `order_number`: número do pedido no site.
+- `commission_rate`: a taxa congelada quando o pedido entrou. Pode ser diferente da taxa atual do cupom em `coupons`.
+- `invoiced: false`: a comissão vem `0`; mostre "aguardando faturamento". Ela passa a contar quando o pedido é faturado, no próximo processamento dos relatórios.
+
+**`evolution`**
+- Mesma ideia do relatório de vendedores, em ordem de data.
+- `period` é a data do dia, a segunda-feira da semana ou o dia 1 do mês.
+
+**`products`**
+- Soma do período por produto, da maior quantidade para a menor.
+- Quando o desconto é do pedido inteiro, o back já reparte entre os produtos, pelo mesmo peso usado para a comissão (valor do item no total do pedido).
+
+**`ranking`**
+- `most_sold_product`: o produto com mais unidades.
+- `highest_commission_product`: o produto com mais comissão.
+- Cada um é o produto de `products` com `quantity` e `commission_value` do período inteiro: desconto do pedido já dividido entre os itens e comissão 0 em pedido não faturado.
+- Os dois vêm `null` quando não há venda no período. `highest_commission_product` também vem `null` quando nenhum produto gerou comissão.
+
+**`by_coupon`**: por cupom usado nos pedidos do período, do maior líquido para o menor.
+
+**O que não vem nessa resposta:** custo, markup, margem, lucro e dados de cliente.
 
 **Erros**
 

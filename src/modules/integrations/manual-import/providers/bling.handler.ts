@@ -293,9 +293,9 @@ export class BlingManualImportHandler implements ManualImportHandler {
       return;
     }
 
-    // "order.updated" cria o pedido se ele ainda não existir.
+    // "order.updated" cria o pedido se ele ainda não existir; refetchCoupon rebusca o cupom na Magento.
     await queues.blingOrder.add(
-      { event: "order.updated", action: "updated", data: { id: blingId } },
+      { event: "order.updated", action: "updated", data: { id: blingId }, refetchCoupon: true },
       jobRef.jobId,
       manualImportJobOptions(),
     );

@@ -18,7 +18,9 @@ import {
 import { UserType } from "../../../../company/users/user_config/user_config.types";
 import { AFFILIATED_USER_TYPE, SELLER_USER_TYPE } from "../../../../../shared/constants/user-types";
 import { CD21_UNIT_BUSINESS_NUMBER } from "../../../../company/unit-business/helpers/cd21-unit-business-number";
-import { CreateContactWithUserInput } from "../../schemas/contact.schema";
+import { CreateContactWithUserInput, UpdateContactWithUserInput } from "../../schemas/contact.schema";
+import User from "../../../../company/users/users/user.model";
+import { UpdateUserInput } from "../../../../company/users/users/schemas/user.schema";
 import { ManagerPeriod } from "../types/sellers.types";
 import { withManagerPeriodNames } from "../helpers/manager-period-names";
 
@@ -42,11 +44,57 @@ export class SellerService extends BaseService<Contact, SellerRepository> {
     super(sellerRepository);
   }
 
-  /** Detalhe do contato (GET /api/contacts/:id) com o nome da loja/grupo em cada período do gerente; null = não existe. */
+  /** Detalhe do contato (GET /api/contacts/:id): nome da loja/grupo nos períodos do gerente e `user` (null sem usuário); null = não existe. */
   async findDetail(id: string) {
-    const contact = await this.repository.findById(id);
+    const contact = await this.repository.findByIdWithUser(id);
     if (!contact) return null;
-    return withManagerPeriodNames(contact);
+    const detail = await withManagerPeriodNames(contact);
+
+    // Só o que a tela edita; status na linguagem da tela (users.active).
+    const user = (contact as Contact & { user?: User | null }).user;
+    let userSummary = null;
+    if (user) {
+      userSummary = { id: user.id, email: user.email, phone: user.phone ?? null, status: user.active === false ? "Inativo" : "Ativo" };
+    }
+    return { ...detail, user: userSummary };
+  }
+
+  /**
+   * PUT /:id/with-user: atualiza contato + usuário numa transação (nome igual nos dois; senha/status só se vierem).
+   * null = contato não existe; contato sem usuário → erro.
+   */
+  async updateWithUser(id: string, dto: UpdateContactWithUserInput) {
+    const { status, ...userFields } = dto;
+
+    try {
+      const updated = await sequelize.transaction(async (t) => {
+        const contact = await this.repository.findById(id, {
+          attributes: ["id", "user_id"],
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (!contact) return null;
+        if (!contact.user_id) throw new Error("Este contato não tem usuário para editar");
+
+        const userPayload: Partial<UpdateUserInput> & { active?: boolean } = { ...userFields };
+        if (status !== undefined) userPayload.active = status === "Ativo";
+        await userService.updateUserWithValidation(contact.user_id, userPayload, t);
+
+        if (dto.name !== undefined) {
+          await this.repository.update(id, { name: dto.name }, { transaction: t });
+        }
+        return contact;
+      });
+      if (!updated) return null;
+    } catch (err) {
+      // Corrida com outro cadastro no mesmo e-mail (unique de users.email) depois da checagem do user.service.
+      if (err instanceof UniqueConstraintError && err.errors?.[0]?.path === "email") {
+        throw new Error("Outro usuário já possui este email");
+      }
+      throw err;
+    }
+
+    return this.findDetail(id);
   }
 
   /**

@@ -29,6 +29,13 @@ Vendedores do Bling e afiliados (clientes ficam em `customers`, não aqui apesar
 - `createUserFromSellerName` (usa `id_system` como CPF) lança "Vendedor ... sem id_system cadastrado" se vier null; `invoice.service.ts` devolve `seller.id_system ?? ""`.
 - Index: sem `filterableFields` (todo campo filtra) → `filters[type]=AFFILIATED` lista afiliados.
 
+## `PUT /api/contacts/:id/with-user` (edita User + Contact)
+
+`[authenticate, validateUpdate(UpdateContactWithUserSchema), userPermissions]` (contacts + update) → 200 detalhe do `GET /:id` / 404 / 400 `{ error }`. Body strict, tudo opcional: `name`, `email`, `password`, `phone` (null apaga), `status` (`Ativo|Inativo` → `users.active`; inativo bloqueia login novo, token aberto segue válido). Sem cpf/loja.
+
+- `sellerService.updateWithUser`: transação com `lock: UPDATE` no contato → sem `user_id` = erro → `userService.updateUserWithValidation(userId, dto, t)` (transação externa opcional; checa e-mail de outro usuário, hook do model faz hash da senha, apaga cache `user:<id>`) → `name` também no contato. `UniqueConstraintError` em `email` (corrida) vira a mesma mensagem.
+- `GET /:id` (`findDetail`) usa `sellerRepository.findByIdWithUser` (include `user` id/email/phone/active) e devolve `user: { id, email, phone, status }|null`.
+
 ## Afiliado
 
 - Sempre loja 21. Login/me próprios em `affiliated/` (`/api/contacts/affiliated/{login,me}`) — ver `../modules/auth.md` § "Login do afiliado".

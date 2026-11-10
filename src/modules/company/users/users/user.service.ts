@@ -153,14 +153,16 @@ export class UserService extends BaseService<User, UserRepository> {
     }
   }
 
+  // Transação externa opcional: contacts /:id/with-user atualiza User + Contact juntos. `active` só vem dessa rota (bloqueio do login).
   async updateUserWithValidation(
     userId: string,
-    userDto: UpdateUserInput,
+    userDto: Partial<UpdateUserInput> & { active?: boolean },
+    transaction?: Transaction,
   ): Promise<User | null> {
     const userCached = await redisService.get(`user:${userId}`);
     if (userCached) await redisService.delete(`user:${userId}`);
 
-    return await sequelize.transaction(async (t) => {
+    const run = async (t: Transaction) => {
       const {
         config,
         user_unit_business,
@@ -195,6 +197,7 @@ export class UserService extends BaseService<User, UserRepository> {
       if (userDto.email) {
         const existingUser = await this.repository.findOne({
           where: { email: userDto.email },
+          transaction: t,
         });
         if (existingUser && existingUser.id !== userId) {
           throw new Error("Outro usuário já possui este email");
@@ -204,6 +207,7 @@ export class UserService extends BaseService<User, UserRepository> {
       if (userDto.cpf) {
         const cpfExists = await this.repository.findOne({
           where: { cpf: userDto.cpf },
+          transaction: t,
         });
         if (cpfExists && cpfExists.id !== userId) {
           throw new Error("Outro usuário já possui este CPF");
@@ -270,7 +274,9 @@ export class UserService extends BaseService<User, UserRepository> {
       }
 
       return updated;
-    });
+    };
+
+    return await (transaction ? run(transaction) : sequelize.transaction(run));
   }
 
   // Soft delete: só desativa (bloqueia login), não apaga a linha.

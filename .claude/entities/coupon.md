@@ -5,7 +5,7 @@
 ## Tabelas
 - `coupons`: `code` UNIQUE (sempre `trim().toUpperCase()` — `CouponService.normalizeCode` no create/update/`findOrCreateByCode`), `discount_type` (`percent|fixed`, nullable), `discount_value` (nullable), `active`. Cupom genérico: pode não ter afiliado.
 - `contact_coupons`: vínculo afiliado (`contacts.type = AFFILIATED`) ↔ cupom com `commission_rate` (%), `active`, `deactivated_at`. Índice parcial `UNIQUE (coupon_id) WHERE active` = um dono ativo por cupom; afiliado pode ter vários cupons.
-- `order_coupons`: PK `(order_id, coupon_id)`, `contact_coupon_id` (nullable), `discount_amount`, `commission_rate`, `commission_amount` (congelados), só `created_at`. Índice parcial `UNIQUE (order_id) WHERE contact_coupon_id IS NOT NULL` = no máximo um afiliado por pedido.
+- `order_coupons`: PK `(order_id, coupon_id)`, `contact_coupon_id` (nullable), `discount_amount` (desconto **total** do pedido na Magento — todas as regras somadas, ex.: cupom + PIX; a Magento não separa por regra; não entra na comissão nem em relatório), `commission_rate`, `commission_amount` (congelados), só `created_at`. Índice parcial `UNIQUE (order_id) WHERE contact_coupon_id IS NOT NULL` = no máximo um afiliado por pedido.
 - **Nada é apagado**: FKs `RESTRICT` (exceto `order_id` → `CASCADE`); delete/bulk das rotas respondem 405. Cupom e vínculo só são inativados.
 
 ## Rotas

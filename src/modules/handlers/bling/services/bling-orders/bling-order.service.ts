@@ -416,11 +416,12 @@ export class BlingOrderService {
   }
 
   // Mappings ORDER (Bling + Magento) e, 1ª vez que o pedido do site aparece, enfileira a busca do cupom.
-  // Best effort: falha só loga, nunca derruba a ingestão do pedido.
+  // `refetchCoupon` (import manual) reenfileira mesmo já mapeado: recupera job de cupom perdido. Best effort.
   private async syncOrderIntegrationMappings(
     orderId: string,
     orderData: any,
     blingIntegrationId: string,
+    refetchCoupon = false,
   ): Promise<void> {
     try {
       await integrationMappingService.createOrUpdateIntegrationMapping({
@@ -443,15 +444,17 @@ export class BlingOrderService {
         },
         attributes: ["id"],
       });
-      // Já mapeado = cupom já buscado; não refaz a chamada na Magento a cada update.
-      if (existing) return;
+      // Já mapeado = cupom já buscado; não refaz a chamada na Magento a cada update (só no import manual).
+      if (existing && !refetchCoupon) return;
 
-      await integrationMappingService.createOrUpdateIntegrationMapping({
-        entity_type: "ORDER",
-        internal_id: orderId,
-        external_id: magentoOrderId,
-        integrations_id: magentoIntegration.id,
-      });
+      if (!existing) {
+        await integrationMappingService.createOrUpdateIntegrationMapping({
+          entity_type: "ORDER",
+          internal_id: orderId,
+          external_id: magentoOrderId,
+          integrations_id: magentoIntegration.id,
+        });
+      }
 
       this.magentoSyncQueue ??= new MagentoSyncQueue({ workless: true });
       await this.magentoSyncQueue.add(
@@ -994,7 +997,7 @@ export class BlingOrderService {
   }
 
   async updateOrderFromBling(
-    body: blingOrderWebHookData,
+    body: blingOrderWebHookData & { refetchCoupon?: boolean },
   ): Promise<{ customer: any; cnaes: any[]; orderSystem: any } | null> {
     try {
       const integration = await getBlingIntegration("Bling");
@@ -1224,7 +1227,12 @@ export class BlingOrderService {
         );
       }
 
-      await this.syncOrderIntegrationMappings(existingOrder.id, orderData, integration.id);
+      await this.syncOrderIntegrationMappings(
+        existingOrder.id,
+        orderData,
+        integration.id,
+        body.refetchCoupon === true,
+      );
       await orderPaymentService.replaceForOrder(
         existingOrder.id,
         orderPayments.map((payment) => ({

@@ -2,8 +2,8 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { authenticate } from "../../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../../middlewares/user-permissions";
-import { validateCreate } from "../../../../../middlewares/validation";
-import { CreateContactWithUserSchema } from "../../schemas/contact.schema";
+import { validateCreate, validateUpdate } from "../../../../../middlewares/validation";
+import { CreateContactWithUserSchema, UpdateContactWithUserSchema } from "../../schemas/contact.schema";
 import RouterController from "../../../../../shared/utils/base-models/base-router-controller";
 import sellerService from "../services/sellers.service";
 
@@ -39,6 +39,7 @@ class SellerController extends RouterController {
     // Detalhe do contato (substitui o show do CRUD genérico): nomes de loja/grupo exigem unit-business, que o core não pode importar (ciclo).
     this.router.get(`/:id`, ...this.mw("show"), this.show);
     this.router.put(`/:id/manager-periods`, ...this.mw("updateManagerPeriods"), this.updateManagerPeriods);
+    this.router.put(`/:id/with-user`, ...this.mw("updateWithUser"), this.updateWithUser);
   }
 
   // create-from-seller-name segue sem middleware (como antes da separação).
@@ -47,6 +48,7 @@ class SellerController extends RouterController {
       show: [authenticate, userPermissions],
       updateManagerPeriods: [authenticate, userPermissions],
       createWithUser: [authenticate, validateCreate(CreateContactWithUserSchema), userPermissions],
+      updateWithUser: [authenticate, validateUpdate(UpdateContactWithUserSchema), userPermissions],
     };
   }
 
@@ -65,6 +67,17 @@ class SellerController extends RouterController {
     try {
       const record = await sellerService.createWithUser(req.body);
       return res.status(201).json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  /** PUT /:id/with-user — edita contato + usuário (nome, e-mail, telefone, senha, status) e devolve o detalhe do GET /:id. */
+  updateWithUser = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const record = await sellerService.updateWithUser(req.params.id as string, req.body);
+      if (!record) return res.status(404).json({ error: "Não encontrado" });
+      return res.json(record);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
