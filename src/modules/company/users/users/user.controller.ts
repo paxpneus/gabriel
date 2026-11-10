@@ -142,9 +142,10 @@ export class UserController extends BaseController<User, typeof UserService> {
   };
 
   logout = async (req: Request, res: Response): Promise<Response> => {
-    const {userId} = req.body
+    // Express 5 deixa req.body undefined em POST sem corpo: logout não pode quebrar por isso.
+    const userId = req.body?.userId;
     res.clearCookie("token");
-    await redisService.delete(`user:${userId}`)
+    if (userId) await redisService.delete(`user:${userId}`);
     return res.json({ message: "Logout realizado" });
   };
 }
