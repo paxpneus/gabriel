@@ -51,38 +51,39 @@ describe("AffiliatedReportService", () => {
 
   const item = (overrides: Record<string, unknown>) => ({
     product_id: "p1", name: "Pneu A", brand: "Marca", measure: "175/70R13",
-    quantity: 1, gross_total: 0, net_total: 0, commission: 0, ...overrides,
+    quantity: 1, net_total: 0, commission: 0, ...overrides,
   });
   const rows = [
     {
       order_id: "o1", order_date: "2026-11-03", order_number: "1001", coupon_code: "GABS10",
-      gross_total: "100.00", net_total: "90.00", commission: "9.00", commission_rate: "10.00",
+      net_total: "90.00", commission: "9.00", commission_rate: "10.00",
       invoiced: true,
       items: [
-        item({ quantity: 2, gross_total: 60, net_total: 54, commission: 5.4 }),
-        item({ product_id: "p2", name: "Pneu B", gross_total: 40, net_total: 36, commission: 3.6 }),
+        item({ quantity: 2, net_total: 54, commission: 5.4 }),
+        item({ product_id: "p2", name: "Pneu B", net_total: 36, commission: 3.6 }),
       ],
     },
     {
       order_id: "o2", order_date: "2026-11-01", order_number: "1000", coupon_code: "GABS10",
-      gross_total: "50.10", net_total: "50.10", commission: "0.00", commission_rate: "10.00",
+      net_total: "50.10", commission: "0.00", commission_rate: "10.00",
       invoiced: false,
-      items: [item({ product_id: "p2", name: "Pneu B", quantity: 1, gross_total: 50.1, net_total: 50.1 })],
+      items: [item({ product_id: "p2", name: "Pneu B", quantity: 1, net_total: 50.1 })],
     },
   ];
 
-  it("shows gross − discount = net and net × rate = commission per order, with invoiced flag", async () => {
+  it("shows only net (no gross/discount) and net × rate = commission per order, with invoiced flag", async () => {
     repository.findOrders.mockResolvedValue(rows);
 
     const report = await service.getReport("user-1", "2026-11-01", "2026-11-30");
 
     expect(report?.orders[0]).toEqual({
       order_id: "o1", order_date: "2026-11-03", order_number: "1001", coupon_code: "GABS10",
-      gross_total: 100, discount_value: 10, net_total: 90,
+      net_total: 90,
       commission_rate: 10, commission: 9, invoiced: true,
       products: [{ name: "Pneu A", quantity: 2 }, { name: "Pneu B", quantity: 1 }],
     });
-    expect(report?.orders[1]).toEqual(expect.objectContaining({ commission: 0, invoiced: false, discount_value: 0 }));
+    expect(JSON.stringify(report)).not.toMatch(/gross|discount/);
+    expect(report?.orders[1]).toEqual(expect.objectContaining({ commission: 0, invoiced: false }));
   });
 
   it("summary: commission_pct only over invoiced orders", async () => {
@@ -92,8 +93,6 @@ describe("AffiliatedReportService", () => {
 
     expect(report?.summary).toEqual({
       orders_count: 2,
-      gross_total: 150.1,
-      discount_total: 10,
       net_total: 140.1,
       total_commission: 9,
       commission_pct: 10,
@@ -109,7 +108,7 @@ describe("AffiliatedReportService", () => {
     // 2026-11-01 é domingo (semana de 26/10); 03/11 é terça (semana de 02/11).
     expect(report?.evolution.weekly.map((point) => point.period)).toEqual(["2026-10-26", "2026-11-02"]);
     expect(report?.evolution.monthly).toEqual([
-      { period: "2026-11-01", orders_count: 2, gross_total: 150.1, discount_total: 10, net_total: 140.1, commission: 9 },
+      { period: "2026-11-01", orders_count: 2, net_total: 140.1, commission: 9 },
     ]);
   });
 
@@ -119,8 +118,8 @@ describe("AffiliatedReportService", () => {
     const report = await service.getReport("user-1", "2026-11-01", "2026-11-30");
 
     expect(report?.products).toEqual([
-      { product_id: "p1", product_name: "Pneu A", product_brand: "Marca", product_measure: "175/70R13", quantity: 2, gross_total: 60, discount_value: 6, net_total: 54, commission_value: 5.4 },
-      { product_id: "p2", product_name: "Pneu B", product_brand: "Marca", product_measure: "175/70R13", quantity: 2, gross_total: 90.1, discount_value: 4, net_total: 86.1, commission_value: 3.6 },
+      { product_id: "p1", product_name: "Pneu A", product_brand: "Marca", product_measure: "175/70R13", quantity: 2, net_total: 54, commission_value: 5.4 },
+      { product_id: "p2", product_name: "Pneu B", product_brand: "Marca", product_measure: "175/70R13", quantity: 2, net_total: 86.1, commission_value: 3.6 },
     ]);
     const pneuA = { product_id: "p1", product_name: "Pneu A", product_brand: "Marca", product_measure: "175/70R13", quantity: 2, commission_value: 5.4 };
     expect(report?.ranking).toEqual({ most_sold_product: pneuA, highest_commission_product: pneuA });

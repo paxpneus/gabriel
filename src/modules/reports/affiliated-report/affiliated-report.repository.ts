@@ -6,7 +6,7 @@ import { AffiliatedReportFilters, AffiliatedReportOrderRow } from "./affiliated-
 export class AffiliatedReportRepository {
   /**
    * Pedidos do afiliado no período, na mesma base do report_rows do seller report (snapshot por item, venda válida, sem "Vendedor 0").
-   * Bruto = net_total (produtos antes do desconto do pedido), líquido = commission_base (base da comissão); nada de cliente, custo ou lucro.
+   * Só líquido = commission_base (base da comissão, já com o desconto do pedido); bruto e desconto não saem do SQL. Nada de cliente, custo ou lucro.
    */
   findOrders(filters: AffiliatedReportFilters): Promise<AffiliatedReportOrderRow[]> {
     return sequelize.query<AffiliatedReportOrderRow>(
@@ -15,7 +15,6 @@ export class AffiliatedReportRepository {
         s.order_id,
         TO_CHAR(s.order_date, 'YYYY-MM-DD')   AS order_date,
         o.number_order_channel                AS order_number,
-        SUM(s.net_total)                      AS gross_total,
         SUM(s.commission_base)                AS net_total,
         SUM(s.affiliated_commission_value)    AS commission,
         oc.commission_rate,
@@ -28,7 +27,6 @@ export class AffiliatedReportRepository {
             'brand', s.product_brand,
             'measure', s.product_measure,
             'quantity', s.quantity,
-            'gross_total', s.net_total,
             'net_total', s.commission_base,
             'commission', s.affiliated_commission_value
           )

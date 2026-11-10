@@ -36,19 +36,17 @@ function weekStart(date: string): string {
 // Pedido com valores em centavos, base de todas as somas do relatório.
 interface OrderCents {
   row: AffiliatedReportOrderRow;
-  gross: number;
   net: number;
   commission: number;
 }
 
 // Soma dos pedidos por período (dia/semana/mês), em ordem de data.
 function evolutionBy(orders: OrderCents[], periodOf: (date: string) => string): AffiliatedReportEvolutionPoint[] {
-  const byPeriod = new Map<string, { count: number; gross: number; net: number; commission: number }>();
+  const byPeriod = new Map<string, { count: number; net: number; commission: number }>();
   for (const order of orders) {
     const period = periodOf(order.row.order_date);
-    const totals = byPeriod.get(period) ?? { count: 0, gross: 0, net: 0, commission: 0 };
+    const totals = byPeriod.get(period) ?? { count: 0, net: 0, commission: 0 };
     totals.count += 1;
-    totals.gross += order.gross;
     totals.net += order.net;
     totals.commission += order.commission;
     byPeriod.set(period, totals);
@@ -58,8 +56,6 @@ function evolutionBy(orders: OrderCents[], periodOf: (date: string) => string): 
     .map(([period, totals]) => ({
       period,
       orders_count: totals.count,
-      gross_total: totals.gross / 100,
-      discount_total: (totals.gross - totals.net) / 100,
       net_total: totals.net / 100,
       commission: totals.commission / 100,
     }));
@@ -67,7 +63,7 @@ function evolutionBy(orders: OrderCents[], periodOf: (date: string) => string): 
 
 // Produtos somados no período (item já rateado no snapshot pelo peso da comissão), mais vendido primeiro.
 function productsOf(orders: OrderCents[]): AffiliatedReportProduct[] {
-  const byProduct = new Map<string, { product: AffiliatedReportProduct; gross: number; net: number; commission: number }>();
+  const byProduct = new Map<string, { product: AffiliatedReportProduct; net: number; commission: number }>();
   for (const item of orders.flatMap((order) => order.row.items)) {
     const key = item.product_id ?? `name:${item.name ?? ""}`;
     const entry = byProduct.get(key) ?? {
@@ -77,26 +73,20 @@ function productsOf(orders: OrderCents[]): AffiliatedReportProduct[] {
         product_brand: item.brand,
         product_measure: item.measure,
         quantity: 0,
-        gross_total: 0,
-        discount_value: 0,
         net_total: 0,
         commission_value: 0,
       },
-      gross: 0,
       net: 0,
       commission: 0,
     };
     entry.product.quantity = roundQuantity(entry.product.quantity + Number(item.quantity ?? 0));
-    entry.gross += toCents(item.gross_total);
     entry.net += toCents(item.net_total);
     entry.commission += toCents(item.commission);
     byProduct.set(key, entry);
   }
   return [...byProduct.values()]
-    .map(({ product, gross, net, commission }) => ({
+    .map(({ product, net, commission }) => ({
       ...product,
-      gross_total: gross / 100,
-      discount_value: (gross - net) / 100,
       net_total: net / 100,
       commission_value: commission / 100,
     }))
@@ -198,14 +188,12 @@ export class AffiliatedReportService {
 
     const orders: OrderCents[] = orderRows.map((row) => ({
       row,
-      gross: toCents(row.gross_total),
       net: toCents(row.net_total),
       commission: toCents(row.commission),
     }));
 
-    const sum = (list: OrderCents[], field: "gross" | "net" | "commission") =>
+    const sum = (list: OrderCents[], field: "net" | "commission") =>
       list.reduce((total, order) => total + order[field], 0);
-    const gross = sum(orders, "gross");
     const net = sum(orders, "net");
     // % de comissão só sobre faturados: não faturado ainda tem comissão 0 e puxaria a taxa pra baixo.
     const invoiced = orders.filter((order) => order.row.invoiced);
@@ -230,8 +218,6 @@ export class AffiliatedReportService {
     return {
       summary: {
         orders_count: orders.length,
-        gross_total: gross / 100,
-        discount_total: (gross - net) / 100,
         net_total: net / 100,
         total_commission: sum(orders, "commission") / 100,
         commission_pct: commissionPct,
@@ -248,8 +234,6 @@ export class AffiliatedReportService {
           order_date: order.row.order_date,
           order_number: order.row.order_number,
           coupon_code: order.row.coupon_code,
-          gross_total: order.gross / 100,
-          discount_value: (order.gross - order.net) / 100,
           net_total: order.net / 100,
           commission_rate: commissionRate,
           commission: order.commission / 100,

@@ -240,8 +240,6 @@ Aceito em `GET /api/sales-report` e `GET /api/seller-report`. Recebe ids de cont
 {
   "summary": {
     "orders_count": 12,
-    "gross_total": 4400.0,
-    "discount_total": 90.0,
     "net_total": 4310.0,
     "total_commission": 215.5,
     "commission_pct": 5
@@ -253,8 +251,6 @@ Aceito em `GET /api/sales-report` e `GET /api/seller-report`. Recebe ids de cont
       "order_date": "2026-10-05",
       "order_number": "100045678",
       "coupon_code": "FULANO5",
-      "gross_total": 1300.0,
-      "discount_value": 49.1,
       "net_total": 1250.9,
       "commission_rate": 5,
       "commission": 62.55,
@@ -263,14 +259,14 @@ Aceito em `GET /api/sales-report` e `GET /api/seller-report`. Recebe ids de cont
     }
   ],
   "evolution": {
-    "daily":   [{ "period": "2026-10-05", "orders_count": 1, "gross_total": 1300.0, "discount_total": 49.1, "net_total": 1250.9, "commission": 62.55 }],
+    "daily":   [{ "period": "2026-10-05", "orders_count": 1, "net_total": 1250.9, "commission": 62.55 }],
     "weekly":  [],
     "monthly": []
   },
   "products": [
     {
       "product_id": "uuid", "product_name": "Pneu 205/55 R16 ...", "product_brand": "Marca", "product_measure": "205/55R16",
-      "quantity": 4, "gross_total": 1300.0, "discount_value": 49.1, "net_total": 1250.9, "commission_value": 62.55
+      "quantity": 4, "net_total": 1250.9, "commission_value": 62.55
     }
   ],
   "ranking": {
@@ -287,13 +283,11 @@ Aceito em `GET /api/sales-report` e `GET /api/seller-report`. Recebe ids de cont
 }
 ```
 
-**A conta, que o back já entrega pronta:** `gross_total − discount_value = net_total` e `net_total × commission_rate / 100 = commission`.
+**A conta, que o back já entrega pronta:** `net_total × commission_rate / 100 = commission`.
 
-- **Bruto (`gross_total`):** a soma dos produtos do pedido, sem frete.
-- **Desconto (`discount_value` / `discount_total`):** é exatamente o que sai da base da comissão: o desconto total do pedido, com todas as regras somadas (cupom, PIX etc.). O site manda esses descontos somados e não separa por regra. Desconto informado por item no ERP não conta.
-- **Líquido (`net_total`):** a base da comissão.
+- **Líquido (`net_total`):** a base da comissão, já com o desconto do pedido (cupom, PIX etc.) abatido. **Bruto e desconto não vêm na resposta**: só o líquido.
 - **Frete:** não entra na base nem nessa resposta.
-- **Mudança:** o `total_sold` de cada pedido foi substituído por `net_total`.
+- **Mudança:** `gross_total`, `discount_value` e `discount_total` foram removidos de `summary`, `orders`, `evolution` e `products`. Use `net_total`.
 
 **`summary`**
 - `total_commission`: soma da comissão do período.
@@ -310,12 +304,12 @@ Aceito em `GET /api/sales-report` e `GET /api/seller-report`. Recebe ids de cont
 
 **`products`**
 - Soma do período por produto, da maior quantidade para a menor.
-- Quando o desconto é do pedido inteiro, o back já reparte entre os produtos, pelo mesmo peso usado para a comissão (valor do item no total do pedido).
+- O líquido do pedido já vem repartido entre os produtos, pelo mesmo peso usado para a comissão (valor do item no total do pedido).
 
 **`ranking`**
 - `most_sold_product`: o produto com mais unidades.
 - `highest_commission_product`: o produto com mais comissão.
-- Cada um é o produto de `products` com `quantity` e `commission_value` do período inteiro: desconto do pedido já dividido entre os itens e comissão 0 em pedido não faturado.
+- Cada um é o produto de `products` com `quantity` e `commission_value` do período inteiro: comissão 0 em pedido não faturado.
 - Os dois vêm `null` quando não há venda no período. `highest_commission_product` também vem `null` quando nenhum produto gerou comissão.
 
 **`by_coupon`**: por cupom usado nos pedidos do período, do maior líquido para o menor.
