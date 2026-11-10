@@ -106,6 +106,22 @@ Se o front não pedir, o back recusa com o erro abaixo, e aí o front pede a jus
 
 No PDV, a mesma justificativa vale pra todos os lotes que o romaneio gerar.
 
+### Justificativas prontas
+
+`GET /batch/correction-letter/justifications`: lista de justificativas prontas pra agilizar o preenchimento. Exige só login, então funciona na tela normal e na do CD21.
+
+```json
+[
+  {
+    "code": "WRONG_CARRIER",
+    "label": "Transportadora errada",
+    "template": "Nota emitida para a transportadora errada: foi emitida para a transportadora própria, mas era para ter ido por transportadora externa. Carta de correção atrelada à nota {notas}."
+  }
+]
+```
+
+O front troca `{notas}` pelos números das notas com carta de correção (ex. `022307` ou `022307, 022308`) e manda o texto final no mesmo campo da justificativa (`correctionLetterJustification` / `correction_letter_justification`). O usuário pode editar o texto ou escrever outro. O back não valida se o texto veio de uma opção pronta.
+
 **Erro** (400, nada é gravado):
 `Nota(s) com carta de correção: 022307. Informe a justificativa da carta de correção para gerar o romaneio.`
 

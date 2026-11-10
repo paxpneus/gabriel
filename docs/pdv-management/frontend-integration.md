@@ -793,4 +793,5 @@ Nota de venda que saiu pra CD 12/17 por engano (era por transportadora) e foi co
 anexar o PDF em `POST /api/invoice/:id/correction-letter` (multipart `file`). Com isso, a nota deixa de exigir transferência no lote.
 `POST /api/batch/pdv-sales-requests/delivery-note` aceita `correction_letter_justification` no body, obrigatório se algum lote
 tiver nota com carta e ainda não tiver justificativa → senão `400 Nota(s) com carta de correção: 022307. Informe a justificativa da carta de correção para gerar o romaneio.`
+Justificativas prontas em `GET /api/batch/correction-letter/justifications`: o front troca `{notas}` pelos números das notas e manda o texto nesse mesmo campo.
 Finalizar lote passou a ter as mesmas travas do romaneio. Contrato completo: `docs/expedition/correction-letter.md`.
