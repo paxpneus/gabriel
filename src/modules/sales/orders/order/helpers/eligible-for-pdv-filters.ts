@@ -44,12 +44,25 @@ export function orderHasValidSellerWhenRequiredLiteral(
   )`);
 }
 
-// Literais de elegibilidade PDV além da situação (sem romaneio gerado + vendedor válido quando a loja exige) —
-// fonte única de orders.repository.ts::findEligibleForPdvByUnitBusiness/isEligibleForPdv.
+// Pedido da loja que exige vendedor (site Pax) só entra no PDV se foi feito à mão na Bling (numeroLoja vazio):
+// pedido de integração (Magento etc.) já vem com pagamento validado, só falta gerar a nota — não passa por comprovante/Financeiro.
+// Vazio/NULL/"undefined" (String(undefined) quando a Bling omite o campo) = sem integração.
+export function orderWithoutIntegrationNumberWhenRequiredLiteral(
+  sellerRequiredUnitBusinessId: string,
+) {
+  return Sequelize.literal(`(
+    "Order"."unit_business_id" IS DISTINCT FROM ${sequelize.escape(sellerRequiredUnitBusinessId)}
+    OR COALESCE(NULLIF(TRIM("Order"."number_order_channel"), ''), 'undefined') = 'undefined'
+  )`);
+}
+
+// Literais de elegibilidade PDV além da situação (sem romaneio gerado + vendedor válido e sem número de integração
+// quando a loja exige) — fonte única de orders.repository.ts::findEligibleForPdvByUnitBusiness/isEligibleForPdv.
 export function pdvEligibilityLiterals(sellerRequiredUnitBusinessId: string | null) {
   const literals = [orderMissingGeneratedDeliveryNoteLiteral()];
   if (sellerRequiredUnitBusinessId) {
     literals.push(orderHasValidSellerWhenRequiredLiteral(sellerRequiredUnitBusinessId));
+    literals.push(orderWithoutIntegrationNumberWhenRequiredLiteral(sellerRequiredUnitBusinessId));
   }
   return literals;
 }
