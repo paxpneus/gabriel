@@ -6,14 +6,25 @@ jest.mock("../../../../fiscal/invoices/invoice/invoice.service", () => ({
 import invoiceService from "../../../../fiscal/invoices/invoice/invoice.service";
 import { assertAdtBatchTransferReferences } from "../transfer-reference";
 
-const batch = (transporterName: string | null, invoices: Array<[string, string | null, string | null]>) =>
+const batch = (
+  transporterName: string | null,
+  invoices: Array<[string, string | null, string | null, string?]>,
+) =>
   ({
     transporter: transporterName ? { name: transporterName } : null,
-    batchInvoices: invoices.map(([number, invoiceTransporter, reference]) => ({
+    batchInvoices: invoices.map(([number, invoiceTransporter, reference, correctionLetterPath]) => ({
       invoice_id: `inv-${number}`,
-      invoice: { number_system: number, transporter_name: invoiceTransporter, transfer_invoice_reference: reference },
+      invoice: {
+        number_system: number,
+        transporter_name: invoiceTransporter,
+        transfer_invoice_reference: reference,
+        correction_letter_path: correctionLetterPath ?? null,
+      },
     })),
   }) as any;
+
+const closing = (action: string) =>
+  `Vincule a nota de transferência (ou anexe a carta de correção da nota, se ela devia ter ido por transportadora) antes de ${action}.`;
 
 describe("assertAdtBatchTransferReferences", () => {
   beforeEach(() => jest.clearAllMocks());
@@ -27,6 +38,7 @@ describe("assertAdtBatchTransferReferences", () => {
         ["100", invoiceTransporter, "REF: 387"],
         ["101", null, null],
       ]),
+      "gerar o romaneio",
     );
 
     expect(invoiceService.assertTransferReferences).toHaveBeenCalledWith(
@@ -34,13 +46,37 @@ describe("assertAdtBatchTransferReferences", () => {
         { invoiceId: "inv-100", invoiceNumber: "100", reference: "REF: 387" },
         { invoiceId: "inv-101", invoiceNumber: "101", reference: null },
       ],
-      "Vincule a nota de transferência antes de gerar o romaneio.",
+      closing("gerar o romaneio"),
       { checkAlreadyUsed: false },
     );
   });
 
+  it("nota com carta de correção fica fora da checagem; a ação fecha a mensagem", async () => {
+    await assertAdtBatchTransferReferences(
+      batch("LOGISTICA PAX PNEUS SP - CD 12", [
+        ["100", null, null, "temp://abc"],
+        ["101", null, "REF: 387"],
+      ]),
+      "finalizar o lote",
+    );
+
+    expect(invoiceService.assertTransferReferences).toHaveBeenCalledWith(
+      [{ invoiceId: "inv-101", invoiceNumber: "101", reference: "REF: 387" }],
+      closing("finalizar o lote"),
+      { checkAlreadyUsed: false },
+    );
+  });
+
+  it("todas as notas com carta de correção → não valida", async () => {
+    await assertAdtBatchTransferReferences(
+      batch("LOGISTICA PAX PNEUS SP - CD 12", [["100", null, null, "/cartas-correcao/a.pdf"]]),
+      "gerar o romaneio",
+    );
+    expect(invoiceService.assertTransferReferences).not.toHaveBeenCalled();
+  });
+
   it.each([["JADLOG"], ["LOGISTICA PAX PNEUS - CD 21"]])("%s → não valida", async (name) => {
-    await assertAdtBatchTransferReferences(batch(name, [["100", name, null]]));
+    await assertAdtBatchTransferReferences(batch(name, [["100", name, null]]), "gerar o romaneio");
     expect(invoiceService.assertTransferReferences).not.toHaveBeenCalled();
   });
 });

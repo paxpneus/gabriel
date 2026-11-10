@@ -5,6 +5,7 @@ export enum AuditEntity {
   SUPPLIER_MAPPING = "SUPPLIER_MAPPING",
   INTEGRATION_MAPPING = "INTEGRATION_MAPPING",
   EXPEDITION_BATCH = "EXPEDITION_BATCH",
+  INVOICE = "INVOICE",
 }
 
 // Quem gerou o log: usuário logado, sistema (sync/fila) ou link do PDV (sem login, ainda sem fluxo auditado).

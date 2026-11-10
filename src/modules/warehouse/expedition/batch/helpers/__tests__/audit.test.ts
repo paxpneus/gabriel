@@ -13,8 +13,16 @@ describe("deliveryNoteGeneratedAudit", () => {
       after: { delivery_note_generated_at: generatedAt, operator_id: "user-1" },
     });
 
-    expect(entry.changes.before).toEqual({ delivery_note_generated_at: null, operator_name: null });
-    expect(entry.changes.after).toEqual({ delivery_note_generated_at: generatedAt, operator_name: "Fulano" });
+    expect(entry.changes.before).toEqual({
+      delivery_note_generated_at: null,
+      operator_name: null,
+      correction_letter_justification: null,
+    });
+    expect(entry.changes.after).toEqual({
+      delivery_note_generated_at: generatedAt,
+      operator_name: "Fulano",
+      correction_letter_justification: null,
+    });
     expect(buildAuditDescription(entry.entity, entry.action, entry.changes)).toBe(
       'Lote de expedição alterado — Romaneio do lote 42 gerado. Operador: Fulano — Alterações: Romaneio gerado em: — → 30/10/2026, 10:05:00, Operador: — → "Fulano"',
     );
@@ -34,6 +42,22 @@ describe("deliveryNoteGeneratedAudit", () => {
 
     expect(buildAuditDescription(entry.entity, entry.action, entry.changes)).toBe(
       "Lote de expedição alterado — Romaneio do lote 42 gerado novamente. Operador: Beltrano",
+    );
+  });
+
+  it("justificativa da carta de correção entra na descrição", () => {
+    const generatedAt = new Date("2026-10-30T13:05:00Z");
+    const [entry] = deliveryNoteGeneratedAudit({
+      userId: "actor-1",
+      batchId: "batch-1",
+      batchNumber: "42",
+      operatorName: "Fulano",
+      before: { delivery_note_generated_at: generatedAt, operator_id: "user-1", correction_letter_justification: null },
+      after: { delivery_note_generated_at: generatedAt, operator_id: "user-1", correction_letter_justification: "Era ADT" },
+    });
+
+    expect(buildAuditDescription(entry.entity, entry.action, entry.changes)).toBe(
+      'Lote de expedição alterado — Romaneio do lote 42 gerado novamente. Operador: Fulano — Alterações: Justificativa da carta de correção: — → "Era ADT"',
     );
   });
 });

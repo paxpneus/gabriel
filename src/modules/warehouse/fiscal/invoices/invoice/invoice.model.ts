@@ -20,6 +20,8 @@ class Invoice
   public customer_document!: string;
   public xml_path?: string;
   public danfe_path?: string;
+  public correction_letter_path?: string | null;
+  public correction_letter_attached_at?: Date | null;
   public store_id!: string;
   public sender_cnpj!: string;
   public sender_name!: string;
@@ -116,6 +118,15 @@ Invoice.init(
     },
     danfe_path: {
       type: DataTypes.TEXT,
+    },
+    // Carta de correção (PDF) que dispensa a nota de transferência no lote CD 12/17 — ver attachCorrectionLetter.
+    correction_letter_path: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    correction_letter_attached_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
     },
     store_id: {
       type: DataTypes.UUID,

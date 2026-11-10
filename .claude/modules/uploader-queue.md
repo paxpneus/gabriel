@@ -10,7 +10,7 @@ A solução: uma fila BullMQ única (`UploaderQueue`, `src/modules/handlers/uplo
 
 Toda operação de upload primeiro vira uma linha em `temp_files` (BYTEA), via `BaseRepository`/`BaseService` genéricos — sem método customizado. O job BullMQ carrega só o `id` dessa linha, nunca o buffer (Redis é dimensionado pra filas/lock, não pra blobs; Postgres cobre isso nativamente via TOAST).
 
-`entity_type`/`entity_id` são NULLABLE — só preenchidos quando há finalização automática. Quatro hoje (`src/shared/constants/temp-file-entity-type.ts`): `PDV_SALES_REQUEST_RECEIPT` (`pdv_sales_request_receipts.path`), `UNMAPPED_INVOICE_PRODUCT` (`unmapped_invoice_products.image_path`), `INVOICE_DANFE` (`invoices.danfe_path`), `CTE` (`JobTracker`/Redis, não uma tabela — ver abaixo). Path sentinela (`temp://<tempFileId>`, helpers em `temp-file.constants.ts`) sempre se aplica às 2 primeiras; `INVOICE_DANFE` também passou a usar o sentinela, mas só num caso específico (ver abaixo) — `CTE` continua diferente.
+`entity_type`/`entity_id` são NULLABLE — só preenchidos quando há finalização automática. Cinco hoje (`src/shared/constants/temp-file-entity-type.ts`): `PDV_SALES_REQUEST_RECEIPT` (`pdv_sales_request_receipts.path`), `UNMAPPED_INVOICE_PRODUCT` (`unmapped_invoice_products.image_path`), `INVOICE_DANFE` (`invoices.danfe_path`), `CTE` (`JobTracker`/Redis, não uma tabela — ver abaixo), `INVOICE_CORRECTION_LETTER` (`invoices.correction_letter_path`, sempre nasce com sentinela; checker: vazio = `missing` — ver `../entities/invoice/index.md`, "Carta de correção"). Path sentinela (`temp://<tempFileId>`, helpers em `temp-file.constants.ts`) sempre se aplica às 2 primeiras; `INVOICE_DANFE` também passou a usar o sentinela, mas só num caso específico (ver abaixo) — `CTE` continua diferente.
 
 ## Os três modos de uso da fila
 
@@ -30,7 +30,7 @@ Delete segue o mesmo padrão de "sempre enfileirado": `uploaderQueue.enqueueDele
 
 BullMQ nativo (`priority` no `add()`, número menor = mais prioritário), pra um lote de fotos de EAN não atrasar um comprovante de PDV que o financeiro está esperando aprovar. `UploaderPriorityCategory` é um superset dos 4 valores de `TempFileEntityType` — por isso o staging automático (PDV/unmapped/DANFE/CTE) resolve a prioridade sozinho a partir do próprio `entityType` (o chamador nunca escolhe um número), enquanto o consumidor sem entidade (`cte-upsert.service.ts`) passa a categoria explícita (`"CTE"`) em `uploadFireAndForget`/`enqueueDelete`. `auto-backup.service.ts` não usa mais essa fila (ver "Consumidores migrados"), então não tem categoria/prioridade.
 
-Ordem: `PDV_SALES_REQUEST_RECEIPT` (1) > `UNMAPPED_INVOICE_PRODUCT` (2) > `INVOICE_DANFE` (3) > `CTE` (4).
+Ordem: `PDV_SALES_REQUEST_RECEIPT` (1) > `UNMAPPED_INVOICE_PRODUCT` (2) > `INVOICE_DANFE` = `INVOICE_CORRECTION_LETTER` (3) > `CTE` (4).
 
 ## Cache de imagem (`uploader-image-cache.ts`)
 

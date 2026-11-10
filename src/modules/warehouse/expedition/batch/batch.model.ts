@@ -23,6 +23,7 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public delivery_note_generated_at?: Date | null;
   public finished_at?: Date | null;
   public operator_id!: string;
+  public correction_letter_justification?: string | null;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -111,6 +112,11 @@ ExpeditionBatch.init(
         model: 'users',
         key: 'id',
       },
+    },
+    // Por que o romaneio saiu com nota(s) com carta de correção (pedida no generateDeliveryNote).
+    correction_letter_justification: {
+      type: DataTypes.TEXT,
+      allowNull: true,
     },
   },
   {

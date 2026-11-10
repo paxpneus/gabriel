@@ -27,6 +27,7 @@ export interface ExpeditionBatchAttributes {
   delivery_note_generated_at?: Date | null;
   finished_at?: Date | null;
   operator_id?: string;
+  correction_letter_justification?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -56,6 +57,7 @@ export interface ExpeditionBatchFull {
   type?: string;
   mode?: string;
   operator_id?: string;
+  correction_letter_justification?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   batchWithTotalVolumes?: EnrichedBatchInvoice[];

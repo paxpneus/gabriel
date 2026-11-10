@@ -786,3 +786,11 @@ Pedido Bling com "Crédito Master 2x" + "Crédito Master 3x" vem como 2 itens (`
 Campos novos em cada item: `card_brand` (código da bandeira da NF-e: 1 Visa, 2 Mastercard, 3 Amex, 6 Elo, 7 Hipercard...) e `card_brand_name` (`"Mastercard"`), `null` fora de cartão.
 `order.installments` continua sendo o total de parcelas do pedido (2x + 3x = 5).
 `payment_method_matches_receipt` agora também confere parcelas e bandeira de cada comprovante.
+
+## Novo: carta de correção libera nota CD 12/17 sem transferência
+
+Nota de venda que saiu pra CD 12/17 por engano (era por transportadora) e foi corrigida por carta de correção na Bling:
+anexar o PDF em `POST /api/invoice/:id/correction-letter` (multipart `file`). Com isso, a nota deixa de exigir transferência no lote.
+`POST /api/batch/pdv-sales-requests/delivery-note` aceita `correction_letter_justification` no body, obrigatório se algum lote
+tiver nota com carta e ainda não tiver justificativa → senão `400 Nota(s) com carta de correção: 022307. Informe a justificativa da carta de correção para gerar o romaneio.`
+Finalizar lote passou a ter as mesmas travas do romaneio. Contrato completo: `docs/expedition/correction-letter.md`.

@@ -414,11 +414,13 @@ export class ExpeditionBatchController extends BaseController<
         return res.status(400).json({ error: "Informe o operador do romaneio." });
       }
 
-      // Rota só de login: quem gerou (audit) é o usuário logado.
+      // Rota só de login: quem gerou (audit) é o usuário logado. Justificativa: lote com nota com carta de correção.
+      const justification = req.body?.correction_letter_justification;
       const result = await this.service.generateDeliveryNoteFromPdv(
         this.pdvBatchParams(req),
         operatorId,
         (req as PdvAccessRequest).pdvAccess!.userId!,
+        typeof justification === "string" ? justification : null,
       );
       return res.json(result);
     } catch (error: any) {
@@ -533,13 +535,15 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { batchId, userId } = req.query;
+      const { batchId, userId, correctionLetterJustification } = req.query;
 
       // userId da query = operador escolhido; quem gerou (audit) é o usuário logado.
+      // correctionLetterJustification: obrigatória se o lote tem nota com carta de correção.
       const fullBatch = await this.service.generateDeliveryNote(
         batchId as string,
         userId as string,
         getRequestUserId(req),
+        typeof correctionLetterJustification === "string" ? correctionLetterJustification : null,
       );
 
       return res.json(fullBatch);

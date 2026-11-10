@@ -516,8 +516,12 @@ describe("ExpeditionBatchService — operador do romaneio", () => {
         action: "UPDATE",
         changes: expect.objectContaining({
           summary: "Romaneio do lote 42 gerado. Operador: Fulano",
-          before: { delivery_note_generated_at: null, operator_name: null },
-          after: { delivery_note_generated_at: generatedAt, operator_name: "Fulano" },
+          before: { delivery_note_generated_at: null, operator_name: null, correction_letter_justification: null },
+          after: {
+            delivery_note_generated_at: generatedAt,
+            operator_name: "Fulano",
+            correction_letter_justification: null,
+          },
         }),
       }),
     ]);
@@ -663,7 +667,116 @@ describe("ExpeditionBatchService — romaneio da logística própria (CD 12/17)"
     const bulkUpdate = jest.spyOn((service as any).repository, "bulkUpdate");
 
     await expect(service.generateDeliveryNote("batch-1", "user-1", "actor-1")).rejects.toThrow("sem referência");
-    expect(assertAdtBatchTransferReferences).toHaveBeenCalledWith(batch);
+    expect(assertAdtBatchTransferReferences).toHaveBeenCalledWith(batch, "gerar o romaneio");
+    expect(bulkUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("ExpeditionBatchService — carta de correção no romaneio", () => {
+  let service: ExpeditionBatchService;
+  const letterBatch = (justification: string | null = null) =>
+    ({
+      id: "batch-1",
+      number: "42",
+      status: "FINISHED",
+      correction_letter_justification: justification,
+      batchInvoices: [
+        { invoice_id: "inv-1", invoice: { number_system: "022307", correction_letter_path: "temp://abc" } },
+        { invoice_id: "inv-2", invoice: { number_system: "022308", correction_letter_path: null } },
+      ],
+    }) as any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock).mockResolvedValue(undefined);
+    service = new ExpeditionBatchService();
+    jest.spyOn(service, "findOne").mockResolvedValue({ delivery_note_generated_at: null, operator_id: null } as any);
+    (userService.findById as jest.Mock).mockResolvedValue({ name: "Fulano" });
+  });
+
+  it("nota com carta de correção sem justificativa (nem no lote) → bloqueia sem gravar", async () => {
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue(letterBatch());
+    const bulkUpdate = jest.spyOn((service as any).repository, "bulkUpdate");
+
+    await expect(service.generateDeliveryNote("batch-1", "user-1", "actor-1", "   ")).rejects.toThrow(
+      "Nota(s) com carta de correção: 022307. Informe a justificativa da carta de correção para gerar o romaneio.",
+    );
+    expect(bulkUpdate).not.toHaveBeenCalled();
+  });
+
+  it("justificativa informada → gravada no lote junto com o romaneio", async () => {
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue(letterBatch());
+    const bulkUpdate = jest.spyOn((service as any).repository, "bulkUpdate").mockResolvedValue([1] as any);
+
+    await service.generateDeliveryNote("batch-1", "user-1", "actor-1", "  Pedido era por transportadora  ");
+
+    const [data] = bulkUpdate.mock.calls[0] as any[];
+    expect(data.correction_letter_justification).toBe("Pedido era por transportadora");
+  });
+
+  it("lote já tem justificativa → gera de novo sem pedir e sem sobrescrever", async () => {
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue(letterBatch("Já justificado"));
+    const bulkUpdate = jest.spyOn((service as any).repository, "bulkUpdate").mockResolvedValue([1] as any);
+
+    await service.generateDeliveryNote("batch-1", "user-1", "actor-1");
+
+    const [data] = bulkUpdate.mock.calls[0] as any[];
+    expect(data).not.toHaveProperty("correction_letter_justification");
+  });
+
+  it("lote sem carta de correção → justificativa ignorada", async () => {
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue({
+      id: "batch-1",
+      number: "42",
+      status: "FINISHED",
+      batchInvoices: [{ invoice_id: "inv-2", invoice: { number_system: "022308", correction_letter_path: null } }],
+    } as any);
+    const bulkUpdate = jest.spyOn((service as any).repository, "bulkUpdate").mockResolvedValue([1] as any);
+
+    await service.generateDeliveryNote("batch-1", "user-1", "actor-1", "qualquer");
+
+    const [data] = bulkUpdate.mock.calls[0] as any[];
+    expect(data).not.toHaveProperty("correction_letter_justification");
+  });
+});
+
+describe("ExpeditionBatchService — finalizar lote com as travas do romaneio", () => {
+  let service: ExpeditionBatchService;
+  const fullBatch = (type: string) =>
+    ({
+      id: "batch-1",
+      number: "42",
+      type,
+      status: "PENDING",
+      batchInvoices: [{ invoice_id: "inv-1", invoice: { number_system: "022098" }, items: [{ id: "item-1" }] }],
+    }) as any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new ExpeditionBatchService();
+  });
+
+  it("lote de saída sem transferência → bloqueia antes de gravar", async () => {
+    const batch = fullBatch("OUTGOING");
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue(batch);
+    (assertAdtBatchTransferReferences as jest.Mock).mockRejectedValueOnce(new Error("sem referência"));
+    const bulkUpdate = jest.spyOn(service, "bulkUpdate");
+
+    await expect(service.finishBatch("batch-1", "", {})).rejects.toThrow("sem referência");
+    expect(assertAdtBatchTransferReferences).toHaveBeenCalledWith(batch, "finalizar o lote");
+    expect(bulkUpdate).not.toHaveBeenCalled();
+  });
+
+  it("pedido PDV em erro crítico → bloqueia; lote de entrada não checa transferência", async () => {
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue(fullBatch("INCOMING"));
+    (pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock).mockRejectedValueOnce(
+      new Error("erro crítico"),
+    );
+    const bulkUpdate = jest.spyOn(service, "bulkUpdate");
+
+    await expect(service.finishBatch("batch-1", "", {})).rejects.toThrow("erro crítico");
+    expect(assertAdtBatchTransferReferences).not.toHaveBeenCalled();
+    expect(pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices).toHaveBeenCalledWith(["inv-1"]);
     expect(bulkUpdate).not.toHaveBeenCalled();
   });
 });
