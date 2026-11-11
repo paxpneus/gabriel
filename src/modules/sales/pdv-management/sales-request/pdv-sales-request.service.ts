@@ -408,7 +408,7 @@ export class PdvSalesRequestService extends BaseService<
   // quanto a loja placeholder "SEM_LOJA" (bling-order.service.ts, pedido cuja
   // loja não resolveu no Bling: number "0", fora do range, sem type PHYSICAL),
   // que senão ganhava PdvSalesRequest órfã e invisível em qualquer tela.
-  // Exceção: site Pax (ONLINE, sem número) participa — vendedor válido é checado em isEligibleForPdv.
+  // Exceção: site Pax (ONLINE, sem número) participa — vendedor válido e pedido sem número de integração são checados em isEligibleForPdv.
   private async isExcludedFromPdvFlow(unitBusinessId: string): Promise<boolean> {
     const unitBusiness = await unitBusinessService.findById(unitBusinessId);
     if (!unitBusiness) return false;
@@ -778,7 +778,7 @@ export class PdvSalesRequestService extends BaseService<
     const order = await orderService.findById(orderId);
     if (!order?.unit_business_id) return null;
     if (await this.isExcludedFromPdvFlow(order.unit_business_id)) return null;
-    // Site Pax: só pedido com vendedor válido (ver orderHasValidSellerWhenRequiredLiteral).
+    // Site Pax: só pedido com vendedor válido e feito à mão na Bling (ver eligible-for-pdv-filters.ts).
     const websitePaxId = await unitBusinessService.getWebsitePaxUnitBusinessId();
     if (!(await orderService.isEligibleForPdv(orderId, websitePaxId))) return null;
     if (await this.repository.findByOrderId(orderId)) return null;

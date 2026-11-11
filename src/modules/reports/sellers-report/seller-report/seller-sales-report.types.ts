@@ -8,6 +8,8 @@ export interface SellerSalesReportFilters {
   tireMeasure?: string;
   customerIds?: string[];
   unitBusinessIds?: string[];
+  // Contact ids de afiliados (seller_sales_order_item_snapshots.affiliated_id).
+  affiliatedIds?: string[];
   drillDown?: boolean;
 }
 

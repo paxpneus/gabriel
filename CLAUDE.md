@@ -24,6 +24,10 @@
 
 - **Audit log sempre pelo helper.** Montagem do audit (`changes`/`affected`) nunca inline na função de negócio. Genérico: `buildAuditEntries` (`global/audit-logs/helpers/audit-change.ts`) recebe as linhas mexidas (before lido e travado com `lock: t.LOCK.UPDATE` antes de alterar, after como ficou no banco — nunca o que se pretendia gravar) + `fields` + mensagem. Cada módulo tem o seu em `<módulo>/helpers/audit.ts`, só com o específico (mensagem pra leigo, fields, label); a função só chama `auditLogService.record(<helperDoModulo>(...), t)`. Referência: `inventory/products/helpers/audit.ts` (`productRetiredFromIntegrationAudit`). Exceção à regra de "não criar função pra uso único" acima.
 
+## Schemas de validação (Zod)
+
+Schema Zod fica em `<entidade>/schemas/<entidade>.schema.ts` — nunca em `src/shared/`, sem index central. Quem reaproveita campos de outra entidade importa direto do `schemas/` dela (ex.: `contacts/schemas/contact.schema.ts` usa `RequiredUserFields`/`phoneField` de `company/users/users/schemas/user.schema.ts`).
+
 ## Layer separation: repository / service / controller
 
 Segue `BaseRepository`/`BaseService`/`BaseController` (`src/shared/utils/base-models/`). Cada camada só fala com a mesma camada de outras entidades — nunca pula pra camada de baixo.
@@ -148,6 +152,15 @@ Exceção (ver "Organização de módulos"): entidade principal → sub-entidade
 
 Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e reutilizável por mais de um filtro/método: função nomeada, exportada, parametrizada em `helpers/` da própria entidade (ex: `invoice/helpers/`) — nunca função solta/closure dentro do service/repository. Parametrizar pelo que varia entre chamadas (nome de loja, unit business id, alias de tabela, data de referência), não hardcoded pro primeiro caso de uso. Referência: `invoice/helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`), `invoice/helpers/custom-filters.ts` (`storeCollectionDateTodayWhere`) — funções puras, importadas por `invoice.service.ts`/`invoice.repository.ts`. É organização de código, não muda layering acima: o helper pertence à mesma entidade e é usado pela camada que precisar.
 
+## SQL cru (`literal`/`query`) — injection
+
+`literal()` não escapa nada. Interpolação `${}` direta só pra **constante do código** ou **número validado com `Number.isInteger(n)`** (não basta `typeof`). Todo o resto entra parametrizado:
+
+- **Valor** (inclusive `Date` — `${date}` vira `Thu Oct 22 2026...`, SQL inválido): `replacements` (`:name`, escapado e interpolado pelo Sequelize) ou `bind` (`$name`, parametrização real no driver). No Sequelize 6.37.8 do projeto os dois funcionam no `findAll`, mas **nunca os dois na mesma query** (lança erro) — o helper documenta qual usa e quem chama passa a mesma opção. Helper que só devolve fragmento (`customFields`, `*Where`, `QueryParser`) e não controla as options da query: `sequelize.escape(valor)` (instância de `config/sequelize`), nunca `replace(/'/g, "''")` à mão. Exige Sequelize ≥ 6.19.1 (CVE-2023-25813: `replacements` + `where` permitia injection via `:token` no texto do usuário) — não fazer downgrade.
+- **Identificador** (coluna, tabela, direção de `ORDER BY`) vindo do request: replacement não serve (vira `'texto'`). Whitelist em mapa → SQL fixo, com fallback: `SORTABLE[req.query.sort] ?? SORTABLE.name`; `dir === "asc" ? "ASC" : "DESC"`.
+- **Alias** de tabela: parâmetro do helper com default (`alias = "Product"`), sempre vindo do código, nunca do request, e citado com `sequelize.getQueryInterface().quoteIdentifier(alias)` — não `"${alias}"` à mão. Nunca `"Product"."id"` literal no meio do helper: se o alias gerado pelo Sequelize mudar (include, `as`), quebra em silêncio.
+- **Teste**: `config/sequelize` em Jest é **sqlite** (`quoteIdentifier` cita com crase). Teste que confere SQL desses helpers mocka `config/sequelize` com `new Sequelize({ dialect: "postgres" })` sem conexão — ref. `src/shared/query/__tests__/stock-movement-query-objects.test.ts`.
+
 ## Performance de queries e chamadas
 
 **Attributes explícitos.** Toda função nova que chama algo do backend (query Sequelize, chamada a API externa/integração) deve pedir só os campos que vai efetivamente usar — `attributes` na query Sequelize, ou equivalente na chamada externa (params/fields da API). Nunca trazer a entidade inteira "pra garantir"; resposta grande sem uso é o padrão a evitar.
@@ -221,16 +234,17 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `index.md` — regras `type`/dedup, schema
   - `create-flow.md` — fluxo create-product-from-unmapped
 - `invoice/` — Invoice/InvoiceItems/InvoiceFiscalItem, import XML NF-e
-  - `index.md` — visão geral, FK-on-delete, filtros/fixes menores, auth, `tracking_url` (link de rastreio, só Bling)
+  - `index.md` — visão geral, FK-on-delete, filtros/fixes menores, auth, `tracking_url` (link de rastreio, só Bling), carta de correção (libera nota CD 12/17 sem transferência no lote)
   - `item-resolution.md` — ordem de resolução de produto, cascata de mapeamento manual, fixes de duplicate-key
   - `ml-shipping-filters.md` — filtros da fila de shipping Mercado Livre
   - `supplier-discount/filter.md` — filtros `rim`/`supplier_discount`
   - `supplier-discount/report-value.md` — valor de desconto por linha nos relatórios
   - `supplier-discount/unit-business-bypass.md` — bypass de loja só no relatório de produto
 - `unit-business-group.md` — UnitBusinessGroup + pivot `unit_business_group_members` (N:N de unit businesses), rotas, permissão
-- `contact.md` — Contact (vendedores): tipos `SELLER`/`SELLER_MANAGER` (gerente da loja/regional, comissão de gerente por períodos em `custom_data.manager_periods`), `SELLER_CONTACT_TYPES` nas buscas de vendedor do Bling
+- `contact.md` — Contact (vendedores e afiliados): tipos `SELLER`/`SELLER_MANAGER` (gerente da loja/regional, comissão de gerente por períodos em `custom_data.manager_periods`)/`AFFILIATED`, `SELLER_CONTACT_TYPES` nas buscas de vendedor do Bling, `id_system` opcional, rota `/with-user` (User + Contact) e login/me do afiliado
 - `customer.md` — Customer: enum `type`, documento nullable, fallback quando Bling manda `tipoPessoa`/`numeroDocumento` vazios
 - `ticket.md` — Ticket: `requester_user_id` obrigatório no body (não é o logado), `opened_by`/`closed_by` pelo usuário logado, backfill m336
+- `coupon.md` — cupons (`coupons`/`contact_coupons`/`order_coupons`): vínculo afiliado ↔ cupom, índices parciais, nunca deleta, comissão congelada por pedido (`registerFromMagento`)
 - `store.md` — Store (tipo canal de venda, não filial), fix de dedup
 - `stock-movement.md` — módulo stock/stock_movements
 - `inventory-batch.md` — InventoryBatch/Items/Logs (contagem de inventário), modos FIXED/CYCLIC, gate de integration mapping

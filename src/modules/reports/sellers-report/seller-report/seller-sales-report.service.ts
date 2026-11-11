@@ -1,3 +1,4 @@
+import { cachedReport, invalidateReportCache, REPORT_CACHE_NAMES } from "../../helpers/report-cache";
 import {
   AffectedSellerCustomerFactKey,
   AffectedSellerProductFactKey,
@@ -76,6 +77,12 @@ export class SellerSalesReportService {
 
       const supplierDiscountRetro =
         await this.reapplySupplierDiscountsRetroactively();
+
+      // Snapshots mudaram: invalida os relatórios que leem os snapshots do seller report.
+      await invalidateReportCache(
+        REPORT_CACHE_NAMES.sellerSalesReport,
+        REPORT_CACHE_NAMES.sellerCommissionReport,
+      );
 
       return {
         jobName: JOB_NAME,
@@ -156,6 +163,11 @@ export class SellerSalesReportService {
 
   async getJobStatus() {
     return sellerSalesReportRepository.getJobStatus();
+  }
+
+  /** getReport com cache Redis de 1h por filtro; o job (/run) invalida ao terminar. */
+  async getCachedReport(filters: SellerSalesReportFilters) {
+    return cachedReport(REPORT_CACHE_NAMES.sellerSalesReport, filters, () => this.getReport(filters));
   }
 
   async getReport(filters: SellerSalesReportFilters) {

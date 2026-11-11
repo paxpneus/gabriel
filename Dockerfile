@@ -1,5 +1,6 @@
 # ─── Stage 1: Build ───────────────────────────────────────────────────────────
-FROM node:22-slim AS builder
+# Versão fixada (não `22-slim`): 22.23.4+ corrige CVE-2026-111497 (Brotli); tag flutuante pode reusar imagem em cache vulnerável.
+FROM node:22.23.4-slim AS builder
 
 WORKDIR /app
 
@@ -23,7 +24,8 @@ RUN npm test -- --runInBand
 RUN npm run build
 
 # ─── Stage 2: Base de produção (sem Playwright) ───────────────────────────────
-FROM node:22-slim AS base-prod
+# Versão fixada (não `22-slim`): 22.23.4+ corrige CVE-2026-111497 (Brotli); tag flutuante pode reusar imagem em cache vulnerável.
+FROM node:22.23.4-slim AS base-prod
 
 WORKDIR /app
 
@@ -75,6 +77,10 @@ CMD ["node", "dist/server.js"]
 FROM mcr.microsoft.com/playwright:v1.61.1-noble AS worker-scraping
 
 WORKDIR /app
+
+# A imagem do Playwright v1.61.1 traz Node 24.17.0 (vulnerável à CVE-2026-111497); troca só o binário pela 24.22.2
+# sem subir a versão do Playwright (imagem e pacote npm precisam bater).
+COPY --from=node:24.22.2-slim /usr/local/bin/node /usr/bin/node
 
 ENV NODE_ENV=production \
     ML_HEADLESS=true \

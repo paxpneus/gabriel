@@ -499,14 +499,19 @@ describe("ExpeditionBatchService — lote pendente de saída pelo link CD21", ()
           .spyOn(service, "generateDeliveryNote")
           .mockResolvedValue({ id: "b-fin" } as any);
 
-        const result = await service.generateDeliveryNoteFromPdv({ status: S.SHIPPING }, "user-1", "actor-1");
+        const result = await service.generateDeliveryNoteFromPdv(
+          { status: S.SHIPPING },
+          "user-1",
+          "actor-1",
+          "Era por transportadora",
+        );
 
         expect(batchInvoicesService.findBatchIdsByInvoiceIds).toHaveBeenCalledWith(
           ["inv-5"],
           "cd21-id",
           "OUTGOING", // lote do PDV é sempre de saída (com transbordo o CD21 pode ter lote de entrada da mesma nota)
         );
-        expect(generate).toHaveBeenCalledWith("b-fin", "user-1", "actor-1");
+        expect(generate).toHaveBeenCalledWith("b-fin", "user-1", "actor-1", "Era por transportadora");
         expect(result).toEqual({ batches: [{ id: "b-fin" }], skipped: [], warnings: [] });
       });
 

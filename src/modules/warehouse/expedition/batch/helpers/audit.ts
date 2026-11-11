@@ -1,7 +1,11 @@
 import { buildAuditEntries } from "../../../../global/audit-logs/helpers/audit-change";
 import { AuditAction, AuditEntity, AuditLogEntry } from "../../../../global/audit-logs/audit-log.types";
 
-type DeliveryNoteState = { delivery_note_generated_at?: Date | null; operator_id?: string | null };
+type DeliveryNoteState = {
+  delivery_note_generated_at?: Date | null;
+  operator_id?: string | null;
+  correction_letter_justification?: string | null;
+};
 
 // Romaneio gerado (rota normal ou PDV): quem gerou = userId; operador pelo nome (changes nunca leva o id do usuário).
 export const deliveryNoteGeneratedAudit = (params: {
@@ -16,6 +20,7 @@ export const deliveryNoteGeneratedAudit = (params: {
   const withOperatorName = (row: DeliveryNoteState) => ({
     delivery_note_generated_at: row.delivery_note_generated_at ?? null,
     operator_name: row.operator_id ? params.operatorName : null,
+    correction_letter_justification: row.correction_letter_justification ?? null,
   });
   const before = withOperatorName(params.before);
   const after = withOperatorName(params.after);
@@ -28,7 +33,7 @@ export const deliveryNoteGeneratedAudit = (params: {
     main: {
       entity: AuditEntity.EXPEDITION_BATCH,
       action: AuditAction.UPDATE,
-      fields: ["delivery_note_generated_at", "operator_name"],
+      fields: ["delivery_note_generated_at", "operator_name", "correction_letter_justification"],
       change: { id: params.batchId, before, after },
     },
   });

@@ -2,6 +2,7 @@ import { Op, Transaction } from "sequelize";
 import sequelize from "../../../../../config/sequelize";
 import BaseRepository from "../../../../../shared/utils/base-models/base-repository";
 import Contact from "../../contacts.model";
+import User from "../../../../company/users/users/user.model";
 import { SELLER_CONTACT_TYPES } from "../../contacts.types";
 
 // Queries de vendedor/gerente (contatos SELLER/SELLER_MANAGER) sobre a mesma tabela contacts.
@@ -21,6 +22,13 @@ export class SellerRepository extends BaseRepository<Contact> {
       attributes: ["id"],
       order: [["createdAt", "ASC"]],
       transaction,
+    });
+  }
+
+  /** Contato com o usuário ligado (`user`, só id/email/phone/active; null se não tiver), pro detalhe da tela. */
+  findByIdWithUser(id: string) {
+    return this.model.findByPk(id, {
+      include: [{ model: User, as: "user", attributes: ["id", "email", "phone", "active"], required: false }],
     });
   }
 

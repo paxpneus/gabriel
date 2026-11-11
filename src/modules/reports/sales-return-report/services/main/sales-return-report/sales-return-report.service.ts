@@ -1,3 +1,4 @@
+import { cachedReport, REPORT_CACHE_NAMES } from "../../../../helpers/report-cache";
 import { Op } from "sequelize";
 import {
   endOfDayTz,
@@ -29,6 +30,11 @@ export class SalesReturnReportService {
   constructor(
     private readonly repository: SalesReturnReportRepository = salesReturnReportRepository,
   ) {}
+
+  /** getReport com cache Redis de 1h por filtro; refresh=true recalcula e regrava (rota /refresh). */
+  async getCachedReport(params: SalesReturnReportParams, refresh = false) {
+    return cachedReport(REPORT_CACHE_NAMES.salesReturnReport, params, () => this.getReport(params), refresh);
+  }
 
   /** Devoluções do CD21 pelos movimentos do Kardex (mesma base e valor do stock flow), com dados da venda de origem quando houver. */
   async getReport(params: SalesReturnReportParams): Promise<SalesReturnReport> {

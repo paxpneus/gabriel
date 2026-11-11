@@ -169,7 +169,7 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
   // `unitBusinessId` aceita uma loja só (fluxo normal) ou uma lista (acesso
   // global sem loja selecionada, ex.: Televendas — ver
   // pdv-sales-request.service.ts::findEligibleOrders).
-  // `sellerRequiredUnitBusinessId`: loja cujo pedido só entra com vendedor válido (site Pax); null = sem exigência.
+  // `sellerRequiredUnitBusinessId`: loja cujo pedido só entra com vendedor válido e sem número de integração (site Pax); null = sem exigência.
   async findEligibleForPdvByUnitBusiness(
     unitBusinessId: string | string[],
     sellerRequiredUnitBusinessId: string | null,

@@ -255,7 +255,7 @@ describe("BlingManualImportHandler", () => {
       );
 
       expect(queues.blingOrder.add).toHaveBeenCalledWith(
-        { event: "order.updated", action: "updated", data: { id: 10 } },
+        { event: "order.updated", action: "updated", data: { id: 10 }, refetchCoupon: true },
         "job-10",
         jobOptions,
       );

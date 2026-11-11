@@ -62,11 +62,12 @@ export class InventoryBatchLogsService extends BaseService<
         where: {
           inventory_batch_item_id: {
             [Op.in]: sequelize.literal(
-              `(SELECT id FROM inventory_batch_items WHERE inventory_batch_id = '${inventoryBatchId}')`,
+              `(SELECT id FROM inventory_batch_items WHERE inventory_batch_id = :inventoryBatchId)`,
             ),
           },
         },
         group: ["user_id"],
+        replacements: { inventoryBatchId },
         transaction: t,
       });
 

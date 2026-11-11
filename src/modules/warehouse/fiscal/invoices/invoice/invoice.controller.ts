@@ -11,7 +11,8 @@ import { InvoiceAttributes } from "./invoice.types";
 import multer from "multer";
 import { BlingApiFetchQueue } from "../../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { TCarUpsertQueue } from "../../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
-import { getUserContext } from "../../../../../shared/query/get-logged-user";
+import { getRequestUserId, getUserContext } from "../../../../../shared/query/get-logged-user";
+import { assertUuid } from "../../../../../shared/utils/validators/uuid";
 import {
   authenticateOrPdvLink,
   PdvAccessRequest,
@@ -63,6 +64,26 @@ export class InvoiceController extends BaseController<
       "/:id/finish",
       ...this.mw("finishPendingInvoice"),
       this.finishPendingInvoice,
+    );
+
+    // Carta de correção em PDF (campo "file"): libera a nota CD 12/17 sem nota de transferência no lote/romaneio.
+    this.router.post(
+      "/:id/correction-letter",
+      upload.single("file"),
+      ...this.mw("attachCorrectionLetter"),
+      this.attachCorrectionLetter,
+    );
+
+    this.router.get(
+      "/:id/correction-letter",
+      ...this.mw("getCorrectionLetter"),
+      this.getCorrectionLetter,
+    );
+
+    this.router.get(
+      "/:id/audit-logs",
+      ...this.mw("findAuditLogs"),
+      this.findAuditLogs,
     );
 
     this.router.put(
@@ -169,6 +190,9 @@ export class InvoiceController extends BaseController<
       listInvoicesPendingLogisticOccurrence: [authenticate, userPermissions],
       markAsInternalUse: [authenticate, userPermissions],
       finishPendingInvoice: [authenticate, userPermissions],
+      attachCorrectionLetter: [authenticate, userPermissions],
+      getCorrectionLetter: [authenticate, userPermissions],
+      findAuditLogs: [authenticate, userPermissions],
       listTransferInvoices: [authenticate, userPermissions],
       getTransferInvoicesReport: [authenticate, userPermissions],
       // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
@@ -487,6 +511,51 @@ export class InvoiceController extends BaseController<
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  };
+
+  // POST /:id/correction-letter — 400 com o motivo se o PDF não for a carta de correção desta nota.
+  attachCorrectionLetter = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Envie o PDF da carta de correção." });
+      const invoice = await this.service.attachCorrectionLetter(
+        assertUuid(req.params.id, "Nota fiscal"),
+        { buffer: req.file.buffer, mimeType: req.file.mimetype },
+        getRequestUserId(req),
+      );
+      return res.json(invoice);
+    } catch (error: any) {
+      if (error.message === "Nota fiscal não encontrada") return res.status(404).json({ error: error.message });
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // GET /:id/correction-letter — PDF da carta (inline, como o DANFE), da nuvem ou do staging; 404 sem nota/carta.
+  getCorrectionLetter = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { buffer, filename } = await this.service.getCorrectionLetterFile(assertUuid(req.params.id, "Nota fiscal"));
+      res.set("Content-Type", "application/pdf");
+      res.set("Content-Disposition", `inline; filename="${filename}"`);
+      return res.send(buffer);
+    } catch (error: any) {
+      if (["Nota fiscal não encontrada", "A nota não tem carta de correção anexada."].includes(error.message)) {
+        return res.status(404).json({ error: error.message });
+      }
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // GET /:id/audit-logs — histórico de auditoria da nota (404 se não existe), paginado (page/perPage/filters[action]).
+  findAuditLogs = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const result = await this.service.findAuditLogs(
+        assertUuid(req.params.id, "Nota fiscal"),
+        this.extractQueryParams(req),
+      );
+      return res.json(result);
+    } catch (error: any) {
+      if (error.message === "Nota fiscal não encontrada") return res.status(404).json({ error: error.message });
+      return res.status(400).json({ error: error.message });
     }
   };
 

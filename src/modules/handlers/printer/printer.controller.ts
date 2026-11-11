@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import BaseController from '../../../shared/utils/base-models/base-controller'
 import { authenticate } from '../../../middlewares/auth-token'
+import { userPermissions } from "../../../middlewares/user-permissions";
 import PrinterConfig from './printer.models'
 import PrinterConfigService from './printer.service'
 
@@ -16,12 +17,12 @@ export class PrinterConfigController extends BaseController<PrinterConfig, typeo
     return {
       index: [authenticate],
       show: [authenticate],
-      create: [authenticate],
-      bulkCreate: [authenticate],
-      update: [authenticate],
-      bulkUpdate: [authenticate],
-      destroy: [authenticate],
-      bulkDestroy: [authenticate],
+      create: [authenticate, userPermissions],
+      bulkCreate: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     }
   }
 

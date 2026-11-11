@@ -5,12 +5,20 @@ Desacoplada numa fila própria: `magento-sync.queue.ts` (`MagentoSyncQueue`, fil
 
 ## Por que existe uma fila separada
 
-Antes esse trabalho rodava embutido no job da `BLING_API_FETCH`, então só disparava quando a Bling mandava webhook. `populate-from-bling` (fila `BLING_MIGRATION`, 24h) faz refetch do catálogo inteiro de produtos, e cada fetch de produto enfileira um `sync-product` — o `sync-all` abaixo é a cobertura garantida independente da Bling. A fila `MAGENTO_SYNC` tem dois tipos de job:
+Antes esse trabalho rodava embutido no job da `BLING_API_FETCH`, então só disparava quando a Bling mandava webhook. `populate-from-bling` (fila `BLING_MIGRATION`, 24h) faz refetch do catálogo inteiro de produtos, e cada fetch de produto enfileira um `sync-product` — o `sync-all` abaixo é a cobertura garantida independente da Bling. A fila `MAGENTO_SYNC` tem três tipos de job (`fetch-order` na seção própria abaixo):
 
 - `sync-product` (`productId`): sincroniza 1 produto — disparado pela Bling a cada update/stock, ou pelo job diário abaixo.
 - `sync-all`: sem payload além do `kind`; agendado via cron fixo (`0 23 * * *` BRT, jobId `magento-sync-all-cron`, registrado em `startBlingWorkers`) — varre todo `ProductConfig` da unit business da Bling com `sku` preenchido, filtra só produto `type=UNIT`, e enfileira um `sync-product` por produto. Cobre o catálogo inteiro, substituindo a cobertura diária que `populate-from-bling` dava antes.
 
 `BlingApiFetchQueue` instancia seu próprio client `MagentoSyncQueue({workless:true})` internamente (só produtor, nunca consumidor) — não precisa de injeção de dependência, então todo lugar que já cria `new BlingApiFetchQueue(...)` (scripts, `sefaz-procnfe-retry.queue.ts`, etc.) continua funcionando sem alteração.
+
+## `fetch-order` (cupom do pedido do site)
+`{kind:"fetch-order", orderId, magentoOrderId}` (jobId `magento-fetch-order-<orderId>`, `magentoFetchOrderJobId`), enfileirado por `BlingOrderService.syncOrderIntegrationMappings` (create e update do pedido):
+- **Só venda da Magento**: `orders.unit_business_id` = loja do site Pax (`unitBusinessService.getWebsitePaxUnitBusinessId()`, "Site Novo - www.paxpneus.com.br") **e** `numeroLoja` = `<increment_id>_<entity_id>` (`/^\d+_(\d+)$/`, trim). `numeroLoja` no formato em outra loja (Woo, loja física) não busca cupom.
+- Enfileira enquanto não existe mapping `ORDER` da Magento **deste** pedido; mapping deste pedido = busca já feita (só o import manual, `refetchCoupon: true`, reenfileira). Mapping de outro pedido: enfileira e o job decide.
+- **O mapping `ORDER` da Magento só é gravado pelo job, depois da busca dar certo** (e depois do `registerFromMagento`). Enqueue falhando (Redis), Magento 5xx/timeout esgotando os 5 retries ou 404 (`UnrecoverableError`) não deixam mapping → o próximo update da Bling reenfileira. Antes o mapping nascia na ingestão e travava o cupom pra sempre.
+- Job: mapping Magento já aponta pra outro pedido → se esse pedido existe (duplicado na Bling) pula sem chamar a Magento (não comissiona duas vezes); se foi apagado (órfão) o mapping passa pro pedido atual. `deleteOrderFromBling` também apaga os mappings `ORDER` do pedido.
+- `MagentoSalesOrderService.getOrderCoupon` (`service/sales/orders/orders.service.ts`): `GET /orders/:entity_id` com `fields=entity_id,increment_id,coupon_code,discount_amount,created_at`. `coupon_code` com trim; vazio = sem cupom; maior que `COUPON_CODE_MAX_LENGTH` = ignorado com log (cadastro não aceita, nunca teria afiliado). Com cupom → `orderCouponService.registerFromMagento` (`discount_amount` em valor absoluto — Magento manda negativo, desconto total do pedido; `orderedAt` = `created_at` em UTC) — ver `../entities/coupon.md`.
 
 ## `integration_mapping.external_id` = `entity_id` do Magento (não o sku)
 

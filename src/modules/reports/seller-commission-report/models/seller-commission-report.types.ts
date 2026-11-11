@@ -40,6 +40,8 @@ export interface SellerCommissionItemRow {
   regional_manager_names: string | null;
   regional_manager_commission_rate: DecimalValue;
   regional_manager_commission_value: DecimalValue;
+  affiliated_name: string | null;
+  affiliated_commission_value: DecimalValue;
 }
 
 export interface SellerCommissionReportRow {
@@ -66,6 +68,9 @@ export interface SellerCommissionReportRow {
   regional_manager_name: string | null;
   regional_manager_commission_rate: number;
   regional_manager_commission_value: number;
+  // Afiliado do cupom do pedido (order_coupons): comissão congelada, rateada no item; 0/null sem afiliado.
+  affiliated_name: string | null;
+  affiliated_commission_value: number;
 }
 
 export interface SellerCommissionReportSummary {
@@ -76,7 +81,8 @@ export interface SellerCommissionReportSummary {
   total_seller_commission: number;
   total_manager_commission: number;
   total_regional_manager_commission: number;
-  // Vendedores + gerentes de loja + regionais: total que a empresa paga de comissão.
+  total_affiliated_commission: number;
+  // Vendedores + gerentes de loja + regionais + afiliados: total que a empresa paga de comissão.
   total_commission: number;
 }
 

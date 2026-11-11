@@ -45,7 +45,7 @@ class SalesReportController {
 
   index = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const report = await SalesReportService.getReport({
+      const report = await SalesReportService.getCachedReport({
         dateFrom: String(req.query.dateFrom ?? req.query.date_from ?? ""),
         dateTo: String(req.query.dateTo ?? req.query.date_to ?? ""),
         unitBusinessId: (req.query.unitBusinessId ??
@@ -79,6 +79,10 @@ class SalesReportController {
           | undefined,
         orderIds: parseArrayQueryParam(
           req.query.orderIds ?? req.query.order_ids,
+        ),
+        // Filtra pedidos pelo afiliado (contact) congelado em order_coupons.
+        affiliatedIds: parseArrayQueryParam(
+          req.query.affiliatedIds ?? req.query.affiliated_ids,
         ),
       });
 

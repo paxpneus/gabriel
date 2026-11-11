@@ -26,7 +26,8 @@ import {
 } from "./invoice.types";
 import Store from "../../../../sales/stores/stores.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
-import { getBrazilDate } from "../../../../../shared/utils/normalizers/date";
+import { APP_TIMEZONE, getBrazilDate } from "../../../../../shared/utils/normalizers/date";
+import dayjs from "dayjs";
 import {
   pendingMercadoLivreWhere,
   allTodayMercadoLivreWhere,
@@ -94,7 +95,18 @@ import pdvSalesRequestService from "../../../../sales/pdv-management/sales-reque
 import {
   isTempFileSentinelPath,
   extractTempFileId,
+  buildTempFileSentinelPath,
+  resolveDeleteTarget,
 } from "../../../../handlers/temp-file/temp-file.constants";
+import uploaderQueue from "../../../../handlers/uploader/uploader.queue";
+import auditLogService from "../../../../global/audit-logs/audit-log.service";
+import AuditLog from "../../../../global/audit-logs/audit-log.model";
+import { AuditEntity } from "../../../../global/audit-logs/audit-log.types";
+import { extractCorrectionLetterIdentification } from "./helpers/correction-letter";
+import { correctionLetterAttachedAudit } from "./helpers/audit";
+
+// Pasta da nuvem das cartas de correção (arquivo carta_correcao_<nº da nota>_<data>.pdf).
+const CORRECTION_LETTER_DIRECTORY = "/cartas-correcao";
 
 const default_seller = "5ff76374-4d67-4ef3-a566-349a015f86b1";
 
@@ -145,6 +157,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         ],
       },
       customFields: {
+        // Marca vem do request — escapada pelo Sequelize, nunca interpolada crua.
         brand: (value) => ({
           [Op.and]: [
             Sequelize.literal(`EXISTS (
@@ -154,8 +167,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       WHERE ii.invoice_id = "Invoice"."id"
         AND p.brand ${
           Array.isArray(value)
-            ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
-            : `= '${String(value).replace(/'/g, "''")}'`
+            ? `IN (${value.map((v: string) => sequelize.escape(v)).join(", ")})`
+            : `= ${sequelize.escape(String(value))}`
         }
     )`),
           ],
@@ -853,6 +866,111 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     );
   }
 
+  // Carta de correção (CC-e em PDF) da nota emitida por engano pra logística própria (CD 12/17) quando era por
+  // transportadora: confere chave + número lidos do PDF contra a nota e a libera sem transferência no lote/romaneio.
+  async attachCorrectionLetter(id: string, file: { buffer: Buffer; mimeType: string }, userId: string | null) {
+    if (file.mimeType !== "application/pdf") throw new Error("Envie a carta de correção em PDF.");
+
+    const letter = await extractCorrectionLetterIdentification(file.buffer);
+    if (!letter.isCorrectionLetter) throw new Error("O arquivo enviado não é uma carta de correção.");
+    if (!letter.accessKey || !letter.number) {
+      throw new Error("Não foi possível ler a chave de acesso e o número da nota na carta de correção.");
+    }
+
+    // A nota da carta é achada pela chave de acesso e precisa ser a mesma da rota, com o mesmo número.
+    const [invoice, letterInvoice] = await Promise.all([
+      this.findById(id, { attributes: ["id", "number_system"] }),
+      this.findOne({ where: { xml_key: letter.accessKey }, attributes: ["id", "number_system"] }),
+    ]);
+    if (!invoice) throw new Error("Nota fiscal não encontrada");
+    if (!letterInvoice) {
+      throw new Error(`A nota da carta de correção (nº ${letter.number}) não foi encontrada no sistema.`);
+    }
+    if (letterInvoice.id !== invoice.id) {
+      throw new Error(
+        `A carta de correção enviada é da nota ${letterInvoice.number_system}, não da nota ${invoice.number_system}.`,
+      );
+    }
+    if (normalizeInvoiceNumber(letter.number) !== normalizeInvoiceNumber(invoice.number_system ?? "")) {
+      throw new Error(
+        `O número da nota na carta de correção (${letter.number}) não confere com a nota ${invoice.number_system}.`,
+      );
+    }
+
+    const auditFields = ["correction_letter_path", "correction_letter_attached_at"];
+    const { tempFileId, previousPath } = await sequelize.transaction(async (t) => {
+      const before = await this.findById(id, { attributes: auditFields, lock: t.LOCK.UPDATE, transaction: t });
+      // Mesmo staging do DANFE: o arquivo sobe em background e o finalizer troca o temp:// pelo path real.
+      const tempFile = await tempFileService.create(
+        {
+          buffer: file.buffer,
+          mime_type: file.mimeType,
+          original_filename: `carta_correcao_${invoice.number_system}_${dayjs().tz(APP_TIMEZONE).format("DD-MM-YYYY_HH-mm-ss")}.pdf`,
+          upload_directory: CORRECTION_LETTER_DIRECTORY,
+          preserve_filename: true,
+          entity_type: "INVOICE_CORRECTION_LETTER",
+          entity_id: id,
+        },
+        { transaction: t },
+      );
+      await this.repository.bulkUpdate(
+        { correction_letter_path: buildTempFileSentinelPath(tempFile.id), correction_letter_attached_at: new Date() },
+        { where: { id }, transaction: t },
+      );
+      const after = await this.findById(id, { attributes: auditFields, transaction: t });
+      await auditLogService.record(
+        correctionLetterAttachedAudit({
+          userId,
+          invoiceId: id,
+          invoiceNumber: invoice.number_system ?? "",
+          before: before!,
+          after: after!,
+        }),
+        t,
+      );
+      return { tempFileId: tempFile.id, previousPath: before?.correction_letter_path ?? null };
+    });
+
+    // Depois do commit: o job precisa achar o temp_files. Carta substituída → apaga a anterior (staging ou nuvem).
+    await uploaderQueue.enqueueUpload(tempFileId, "INVOICE_CORRECTION_LETTER");
+    if (previousPath) {
+      await uploaderQueue.enqueueDelete(resolveDeleteTarget(previousPath), "INVOICE_CORRECTION_LETTER");
+    }
+
+    return this.findById(id, { attributes: ["id", "number_system", ...auditFields] });
+  }
+
+  // PDF da carta de correção: da nuvem, ou do staging (temp_files) enquanto o upload não terminou. Não há como gerar a carta.
+  async getCorrectionLetterFile(id: string): Promise<{ buffer: Buffer; filename: string }> {
+    const invoice = await this.findById(id, { attributes: ["id", "correction_letter_path"] });
+    if (!invoice) throw new Error("Nota fiscal não encontrada");
+    let path = invoice.correction_letter_path;
+    if (!path) throw new Error("A nota não tem carta de correção anexada.");
+
+    if (isTempFileSentinelPath(path)) {
+      const tempFile = await tempFileService.findById(extractTempFileId(path), {
+        attributes: ["id", "buffer", "original_filename"],
+      });
+      if (tempFile) return { buffer: tempFile.buffer, filename: tempFile.original_filename };
+
+      // Corrida: o upload terminou (e apagou o staging) entre as leituras — relê o path já real.
+      const refreshed = await this.findById(id, { attributes: ["id", "correction_letter_path"] });
+      path = refreshed?.correction_letter_path ?? null;
+      if (!path || isTempFileSentinelPath(path)) {
+        throw new Error("A carta de correção ainda não está disponível. Tente novamente em instantes.");
+      }
+    }
+
+    return { buffer: await uploaderService.getFile(path), filename: path.split("/").pop()! };
+  }
+
+  // Histórico de auditoria da nota (hoje: carta de correção anexada).
+  async findAuditLogs(invoiceId: string, params: QueryParams): Promise<PaginatedResult<AuditLog>> {
+    const invoice = await this.findById(invoiceId, { attributes: ["id"] });
+    if (!invoice) throw new Error("Nota fiscal não encontrada");
+    return auditLogService.paginateByEntity(AuditEntity.INVOICE, invoiceId, params);
+  }
+
   async getDanfeBuffer(id: string): Promise<Buffer> {
     const invoice = await this.repository.findById(id, {
       attributes: ["id", "danfe_path", "xml_path"],
@@ -1519,7 +1637,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             ? {
                 id: invoiceWithRelations.seller.id,
                 name: invoiceWithRelations.seller.name,
-                id_system: invoiceWithRelations.seller.id_system,
+                // contacts.id_system is optional (m344); keep the string contract of this response.
+                id_system: invoiceWithRelations.seller.id_system ?? "",
               }
             : default_seller_body,
           customer: {

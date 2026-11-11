@@ -8,7 +8,7 @@ import { validateCreate, validateUpdate } from "../../../../middlewares/validati
 import {
   CreateStockMovementSchema,
   UpdateStockMovementSchema,
-} from "../../../../shared/schemas";
+} from "./schemas/stock-movement.schema";
 import stockMovementsService from "./stock-movements.service";
 import { QueryParams } from "../../../../shared/query/query.types";
 

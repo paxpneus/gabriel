@@ -4,6 +4,7 @@ export const TEMP_FILE_ENTITY_TYPES = [
   "UNMAPPED_INVOICE_PRODUCT",
   "INVOICE_DANFE",
   "CTE",
+  "INVOICE_CORRECTION_LETTER",
 ] as const;
 
 export type TempFileEntityType = (typeof TEMP_FILE_ENTITY_TYPES)[number];

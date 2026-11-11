@@ -98,6 +98,8 @@ import TicketAssignee from "../modules/company/tickets/tickets/ticket-assignees/
 import TicketCategoryOption from "../modules/company/tickets/tickets/ticket-category-options/ticket-category-options.model";
 import Subtask from "../modules/company/tickets/tickets/subtasks/subtasks.model";
 import TicketStatusHistory from "../modules/company/tickets/tickets/ticket-status-histories/ticket-status-histories.model";
+import Coupon from "../modules/sales/coupons/coupons/coupons.model";
+import ContactCoupon from "../modules/sales/coupons/contact-coupons/contact-coupons.model";
 
 export function setupAssociations() {
   // Standalone lookup table; no FK associations declared yet.
@@ -1602,6 +1604,12 @@ User.hasMany(TicketStatusHistory, {
 TicketStatusHistory.belongsTo(User, {
   foreignKey: "changed_by_user_id",
   as: "changedBy",
+});
+
+// Vínculo afiliado ↔ cupom: código/status do cupom nas respostas de /contact-coupons.
+ContactCoupon.belongsTo(Coupon, {
+  foreignKey: "coupon_id",
+  as: "coupon",
 });
 
 // CTE(s)

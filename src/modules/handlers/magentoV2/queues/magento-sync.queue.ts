@@ -1,4 +1,5 @@
-import { Job } from "bullmq";
+import axios from "axios";
+import { Job, UnrecoverableError } from "bullmq";
 import { Op, Transaction } from "sequelize";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import sequelize from "../../../../config/sequelize";
@@ -8,12 +9,27 @@ import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-p
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
 import { getMagentoIntegration } from "../api/magentoV2_api";
 import magentoCatalogService from "../service/catalog/products/products.service";
+import magentoSalesOrderService from "../service/sales/orders/orders.service";
+import orderCouponService from "../../../sales/coupons/order-coupons/order-coupons.service";
+import { COUPON_CODE_MAX_LENGTH } from "../../../sales/coupons/coupons/coupons.types";
+import ordersService from "../../../sales/orders/order/orders.service";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 
 export type MagentoSyncJobPayload =
   | { kind: "sync-product"; productId: string }
-  | { kind: "sync-all" };
+  | { kind: "sync-all" }
+  | { kind: "fetch-order"; orderId: string; magentoOrderId: string };
+
+// jobId do fetch-order: um por pedido local, dedup na fila.
+export const magentoFetchOrderJobId = (orderId: string) => `magento-fetch-order-${orderId}`;
+
+// created_at da Magento vem em UTC sem fuso ("2026-11-10 14:03:22"); inválido/ausente = undefined.
+function parseMagentoUtcDate(value?: string | null): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(`${value.trim().replace(" ", "T")}Z`);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
 
 // Fila única de sincronização com o Magento (preço/mapping/unmapped/
 // custo_medio). Antes esse trabalho rodava embutido no job da
@@ -34,11 +50,66 @@ export class MagentoSyncQueue extends BaseQueueService<MagentoSyncJobPayload> {
   }
 
   async process(job: Job<MagentoSyncJobPayload>): Promise<void> {
-    if (job.data.kind === "sync-all") {
-      await this.enqueueAllProducts();
-      return;
+    switch (job.data.kind) {
+      case "sync-all":
+        await this.enqueueAllProducts();
+        return;
+      case "sync-product":
+        await this.syncProduct(job.data.productId);
+        return;
+      case "fetch-order":
+        await this.fetchOrder(job.data.orderId, job.data.magentoOrderId);
+        return;
     }
-    await this.syncProduct(job.data.productId);
+  }
+
+  // ─── pedido do site: lê o cupom na Magento e grava em order_coupons (afiliado/comissão) ───
+  // 404 = pedido não existe na Magento, retry não resolve.
+  // O mapping ORDER da Magento só é gravado depois do cupom: é ele que diz à ingestão da Bling que a busca já foi feita.
+  private async fetchOrder(orderId: string, magentoOrderId: string): Promise<void> {
+    try {
+      const magentoIntegration = await getMagentoIntegration("Magento");
+      const mapping = { entity_type: "ORDER" as const, integrations_id: magentoIntegration.id, external_id: magentoOrderId };
+      // Pedido Magento já é de outro pedido local: se ele ainda existe (duplicado na Bling), não comissiona duas vezes;
+      // se foi apagado (mapping órfão), o mapping passa pra este pedido.
+      const existing = await integrationMappingService.findOne({ where: mapping, attributes: ["id", "internal_id"] });
+      if (existing && existing.internal_id !== orderId) {
+        if (await ordersService.findById(existing.internal_id, { attributes: ["id"] })) {
+          console.warn(
+            `[MAGENTO_SYNC] Magento order ${magentoOrderId} already mapped to order ${existing.internal_id}; skipping order ${orderId}`,
+          );
+          return;
+        }
+        await integrationMappingService.update(existing.id, { internal_id: orderId });
+      }
+
+      const magentoOrder = await magentoSalesOrderService.getOrderCoupon(magentoOrderId);
+      const couponCode = String(magentoOrder?.coupon_code ?? "").trim();
+
+      // Código maior que o aceito no cadastro de cupom nunca teria afiliado: segue sem cupom.
+      if (couponCode.length > COUPON_CODE_MAX_LENGTH) {
+        console.warn(
+          `[MAGENTO_SYNC] Coupon code longer than ${COUPON_CODE_MAX_LENGTH} chars ignored (order=${orderId})`,
+        );
+      } else if (couponCode) {
+        await orderCouponService.registerFromMagento({
+          orderId,
+          couponCode,
+          // Magento manda o desconto negativo.
+          discountAmount: Math.abs(Number(magentoOrder.discount_amount ?? 0)),
+          orderedAt: parseMagentoUtcDate(magentoOrder.created_at),
+        });
+      }
+
+      await integrationMappingService.createOrUpdateIntegrationMapping({ ...mapping, internal_id: orderId });
+    } catch (error: any) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        throw new UnrecoverableError(
+          `[MAGENTO_SYNC] Magento order ${magentoOrderId} not found (order=${orderId})`,
+        );
+      }
+      throw error;
+    }
   }
 
   // ─── job diário (23h BRT) — enfileira 1 "sync-product" por produto UNIT ───

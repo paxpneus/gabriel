@@ -1,3 +1,4 @@
+import { cachedReport, REPORT_CACHE_NAMES } from "../../../../helpers/report-cache";
 import {
   endOfDayTz,
   startOfDayTz,
@@ -23,6 +24,11 @@ export class IntegrationProblemsReportService {
   constructor(
     private readonly repository: IntegrationProblemsReportRepository = integrationProblemsReportRepository,
   ) {}
+
+  /** getReport com cache Redis de 1h por filtro; refresh=true recalcula e regrava (rota /refresh). */
+  async getCachedReport(params: IntegrationProblemsReportParams, refresh = false) {
+    return cachedReport(REPORT_CACHE_NAMES.integrationProblemsReport, params, () => this.getReport(params), refresh);
+  }
 
   /** Divergências nota fiscal × Kardex do CD21 no período, nas saídas (movimento → nota → pedido) e nas devoluções. */
   async getReport(params: IntegrationProblemsReportParams): Promise<IntegrationProblemsReport> {

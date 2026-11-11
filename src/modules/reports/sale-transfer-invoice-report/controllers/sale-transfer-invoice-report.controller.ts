@@ -9,7 +9,12 @@ class SaleTransferInvoiceReportController extends RouterController {
   constructor() {
     super();
     this.router.get("/", authenticate, userPermissions, this.index);
+    this.router.post("/refresh", authenticate, userPermissions, this.refresh);
   }
+
+  // GET / com cache de 1h; POST /refresh (permissão "Atualizar relatórios") = mesmo contrato, ignora o cache, recalcula e regrava.
+  index = (req: Request, res: Response) => this.respond(req, res, false);
+  refresh = (req: Request, res: Response) => this.respond(req, res, true);
 
   // Mesma leitura do relatório de produtos de invoice: ?unitBusinessId= ou filters[unit_business_id], senão a loja do usuário.
   private async resolveUnitBusinessId(req: Request): Promise<string> {
@@ -25,11 +30,12 @@ class SaleTransferInvoiceReportController extends RouterController {
     return (await getUserContext(req)).unitBusinessId;
   }
 
-  index = async (req: Request, res: Response): Promise<Response> => {
+  private respond = async (req: Request, res: Response, refresh: boolean): Promise<Response> => {
     try {
-      const report = await saleTransferInvoiceReportService.getReport(
+      const report = await saleTransferInvoiceReportService.getCachedReport(
         this.extractQueryParams(req),
         await this.resolveUnitBusinessId(req),
+        refresh,
       );
       return res.json(report);
     } catch (error: any) {

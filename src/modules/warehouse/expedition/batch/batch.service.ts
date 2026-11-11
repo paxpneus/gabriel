@@ -12,6 +12,7 @@ import sequelize from "../../../../config/sequelize";
 import { Product, Stock } from "../../../inventory";
 import ExpeditionScanLog from "../scan-logs/scan-logs.model";
 import {
+  ExpeditionBatchAttributes,
   ExpeditionBatchFull,
   PdvBatchActionParams,
   PdvBatchActionResult,
@@ -1180,6 +1181,7 @@ async addInvoiceToLastOutgoingBatch(
     params: PdvBatchActionParams,
     operatorId: string,
     actorUserId: string,
+    correctionLetterJustification?: string | null,
   ) {
     const cd21 = await this.getCd21();
     const { groups } = await this.resolvePdvBatchGroups(
@@ -1190,7 +1192,9 @@ async addInvoiceToLastOutgoingBatch(
     const batchIds = await this.batchIdsOfSaleInvoices(invoiceIds, cd21.id);
 
     const batches = await Promise.all(
-      batchIds.map((batchId) => this.generateDeliveryNote(batchId, operatorId, actorUserId)),
+      batchIds.map((batchId) =>
+        this.generateDeliveryNote(batchId, operatorId, actorUserId, correctionLetterJustification),
+      ),
     );
     await pdvSalesRequestService.notifyChangedBySaleInvoiceIds(invoiceIds);
     return { batches, skipped: [], warnings: [] };
@@ -1717,6 +1721,12 @@ async addInvoiceToLastOutgoingBatch(
 
     const invoicesIds = fullBatch.batchInvoices!.map((s) => s.invoice_id);
 
+    // Mesmas travas do romaneio, antes de gravar. Transferência só no lote de saída: a entrada recebe nota CD 12/17 sem REF.
+    if (fullBatch.type === "OUTGOING") {
+      await assertAdtBatchTransferReferences(fullBatch, "finalizar o lote");
+    }
+    await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(invoicesIds);
+
     const batchInvoiceItemsIds = fullBatch.batchInvoices!.flatMap((s) =>
       s.items!.map((i) => i.id),
     );
@@ -1784,10 +1794,12 @@ async addInvoiceToLastOutgoingBatch(
   }
 
   // operatorId = operador escolhido no front; actorUserId = usuário logado que gerou (vai pro audit log).
+  // correctionLetterJustification: obrigatória se alguma nota do lote tem carta de correção e o lote ainda não tem uma.
   async generateDeliveryNote(
     batchId: string,
     operatorId: string,
     actorUserId: string | null,
+    correctionLetterJustification?: string | null,
   ) {
     const batchInfo = await this.findByIdFullBatch(batchId);
 
@@ -1799,14 +1811,25 @@ async addInvoiceToLastOutgoingBatch(
     }
 
     // Lote CD 12/17: toda nota referencia uma nota de transferência existente (ver helpers/transfer-reference.ts).
-    await assertAdtBatchTransferReferences(batchInfo);
+    await assertAdtBatchTransferReferences(batchInfo, "gerar o romaneio");
+
+    // Nota com carta de correção saiu sem transferência: o romaneio precisa explicar o porquê (guardado no lote).
+    const correctionLetterNumbers = (batchInfo.batchInvoices ?? [])
+      .filter((bi) => bi.invoice.correction_letter_path)
+      .map((bi) => bi.invoice.number_system);
+    const justification = correctionLetterJustification?.trim() || null;
+    if (correctionLetterNumbers.length && !justification && !batchInfo.correction_letter_justification) {
+      throw new Error(
+        `Nota(s) com carta de correção: ${correctionLetterNumbers.join(", ")}. Informe a justificativa da carta de correção para gerar o romaneio.`,
+      );
+    }
 
     // Antes de gravar o romaneio: pedido PDV em CRITICAL_ERROR barra a geração.
     await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(
       (batchInfo.batchInvoices ?? []).map((bi) => bi.invoice_id),
     );
 
-    const auditFields = ["delivery_note_generated_at", "operator_id"];
+    const auditFields = ["delivery_note_generated_at", "operator_id", "correction_letter_justification"];
     await sequelize.transaction(async (t) => {
       // Antes travado: o audit registra o estado real que o UPDATE encontrou.
       const before = await this.findOne({
@@ -1818,17 +1841,19 @@ async addInvoiceToLastOutgoingBatch(
 
       // COALESCE no próprio UPDATE: só grava data/operador se ainda vazios no banco — 2 gerações simultâneas não sobrescrevem.
       // Direto no repository: o bulkUpdate do service barraria a troca de operator_id.
-      await this.repository.bulkUpdate(
-        {
-          delivery_note_generated_at: fn(
-            "COALESCE",
-            col("delivery_note_generated_at"),
-            fn("NOW"),
-          ) as unknown as Date,
-          operator_id: fn("COALESCE", col("operator_id"), operatorId) as unknown as string,
-        },
-        { where: { id: batchId }, transaction: t },
-      );
+      const deliveryNoteData: Partial<ExpeditionBatchAttributes> = {
+        delivery_note_generated_at: fn(
+          "COALESCE",
+          col("delivery_note_generated_at"),
+          fn("NOW"),
+        ) as unknown as Date,
+        operator_id: fn("COALESCE", col("operator_id"), operatorId) as unknown as string,
+      };
+      // Justificativa nova (lote com carta de correção) substitui a anterior.
+      if (correctionLetterNumbers.length && justification) {
+        deliveryNoteData.correction_letter_justification = justification;
+      }
+      await this.repository.bulkUpdate(deliveryNoteData, { where: { id: batchId }, transaction: t });
 
       const after = await this.findOne({
         attributes: auditFields,

@@ -1,5 +1,6 @@
 // src/modules/product/helpers/last-movement-date-filter.ts
 import { literal, Op, WhereOptions } from "sequelize";
+import sequelize from "../../../../config/sequelize";
 import { QueryParams } from "../../../../shared/query/query.types";
 import { LastMovementDateRangeDate, LastMovementDateRangeFilter } from "../product.types";
 
@@ -64,15 +65,15 @@ export function extractLastMovementDateFilter(params: QueryParams): {
  * MANUAL_ADJUSTMENT com custo) do produto, opcionalmente truncada por um
  * cutoff (`asOfDate`).
  *
- * IMPORTANTE: Este subquery NÃO usa Sequelize replacements. Os valores
- * devem ser interpolados já na string (via template literal).
+ * unitBusinessId entra por replacement (`:orderUnitBusinessId`, quem chama
+ * passa em `replacements`); datas entram escapadas.
  */
 export function buildLastMovementDateSubquery(
   unitBusinessId?: string,
   asOfDate?: Date,
 ): string {
   const asOfDateClause = asOfDate
-    ? `AND sm.movement_date <= '${asOfDate.toISOString()}'`
+    ? `AND sm.movement_date <= ${sequelize.escape(asOfDate)}`
     : "";
 
   return `(
@@ -124,7 +125,7 @@ export function buildLastMovementRangeWhere(
 
   if (range.start) {
     return literal(
-      `${subquery} >= '${range.start.toISOString()}'`,
+      `${subquery} >= ${sequelize.escape(range.start)}`,
     ) as unknown as WhereOptions;
   }
 

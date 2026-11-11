@@ -1,4 +1,5 @@
 import { authenticate } from "../../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../../middlewares/user-permissions";
 import BaseController from "../../../../../shared/utils/base-models/base-controller";
 import InvoiceLogisticOccurrences from "./invoice-logistic-occurrences.model";
 import InvoiceLogisticOccurrencesService from "./invoice-logistic-occurrences.service";
@@ -14,15 +15,15 @@ export class InvoiceLogisticOccurrencesController extends BaseController<
   protected middlewaresFor() {
     return {
       index: [authenticate],
-      create: [authenticate],
-      update: [authenticate],
+      create: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
       show: [authenticate],
-      destroy: [authenticate],
+      destroy: [authenticate, userPermissions],
       login: [authenticate],
       // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
-      bulkCreate: [authenticate],
-      bulkUpdate: [authenticate],
-      bulkDestroy: [authenticate],
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 }

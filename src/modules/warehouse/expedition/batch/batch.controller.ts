@@ -7,7 +7,7 @@ import { userPermissions } from "../../../../middlewares/user-permissions";
 import User from "../../../company/users/users/user.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { getRequestUserId, getUserContext } from "../../../../shared/query/get-logged-user";
-import { PdvBatchActionParams } from "./batch.types";
+import { CORRECTION_LETTER_JUSTIFICATIONS, PdvBatchActionParams } from "./batch.types";
 import { assertUuid } from "../../../../shared/utils/validators/uuid";
 import {
   authenticateOrPdvLink,
@@ -57,6 +57,8 @@ export class ExpeditionBatchController extends BaseController<
       isComplete: [authenticate, userPermissions],
       batchReport: [authenticate, userPermissions],
       findAuditLogs: [authenticate, userPermissions],
+      // Lista fixa, sem dado sensível: só login, pra servir a tela normal e a do CD21 (PDV).
+      listCorrectionLetterJustifications: [authenticate],
       addInvoiceToLastOutgoingBatch: [authenticate],
       generateBatchFromPdv: [pdvLoginAccess([PdvAccessScreen.CD21])],
       addPdvToBatch: [pdvLoginAccess([PdvAccessScreen.CD21])],
@@ -140,6 +142,13 @@ export class ExpeditionBatchController extends BaseController<
       "/delivery-note/get",
       ...this.mw("generateDeliveryNote"),
       this.generateDeliveryNote,
+    );
+
+    // Justificativas prontas da carta de correção, pro front oferecer ao gerar o romaneio (2 segmentos: "/:id" da base vem antes).
+    this.router.get(
+      "/correction-letter/justifications",
+      ...this.mw("listCorrectionLetterJustifications"),
+      this.listCorrectionLetterJustifications,
     );
 
     this.router.get(
@@ -414,11 +423,13 @@ export class ExpeditionBatchController extends BaseController<
         return res.status(400).json({ error: "Informe o operador do romaneio." });
       }
 
-      // Rota só de login: quem gerou (audit) é o usuário logado.
+      // Rota só de login: quem gerou (audit) é o usuário logado. Justificativa: lote com nota com carta de correção.
+      const justification = req.body?.correction_letter_justification;
       const result = await this.service.generateDeliveryNoteFromPdv(
         this.pdvBatchParams(req),
         operatorId,
         (req as PdvAccessRequest).pdvAccess!.userId!,
+        typeof justification === "string" ? justification : null,
       );
       return res.json(result);
     } catch (error: any) {
@@ -533,19 +544,26 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { batchId, userId } = req.query;
+      const { batchId, userId, correctionLetterJustification } = req.query;
 
       // userId da query = operador escolhido; quem gerou (audit) é o usuário logado.
+      // correctionLetterJustification: obrigatória se o lote tem nota com carta de correção (texto livre ou preset preenchido pelo front).
       const fullBatch = await this.service.generateDeliveryNote(
         batchId as string,
         userId as string,
         getRequestUserId(req),
+        typeof correctionLetterJustification === "string" ? correctionLetterJustification : null,
       );
 
       return res.json(fullBatch);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
+  };
+
+  // Justificativas prontas da carta de correção; o front troca "{notas}" e manda como texto no romaneio.
+  listCorrectionLetterJustifications = async (_req: Request, res: Response): Promise<Response> => {
+    return res.json(CORRECTION_LETTER_JUSTIFICATIONS);
   };
 
   downloadDeliveryNotes = async (

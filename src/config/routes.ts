@@ -1,7 +1,7 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
-import { INVOICE_PRODUCT_MAPPING_ENTITY, PHYSICAL_EAN_OWNER_ENTITY } from "../shared/constants/roles";
+import { AFFILIATES_REPORT_ENTITY, INVOICE_PRODUCT_MAPPING_ENTITY, PHYSICAL_EAN_OWNER_ENTITY, REPORT_REFRESH_ENTITY } from "../shared/constants/roles";
 
 const router = Router();
 const modulesPath = path.resolve(__dirname, "..", "modules");
@@ -10,10 +10,10 @@ export const ROUTE_TO_TABLE: Record<string, string> = {};
 
 // Rotas que não precisam de verificação de permissão
 // integration-mapping saiu daqui: troca de principal/CRUD de mapping exige a permissão de Produtos (filho integration_mappings).
+// "stores" saiu daqui: escrita de canal de venda exige permissão de Pedidos (filho "Canais de venda" herda do pai); leitura segue só com login no controller.
 const EXCLUDED_ROUTES = new Set([
   "bling",
   "bling-orders",
-  "stores",
   "mercado_livre",
 ]);
 
@@ -72,16 +72,33 @@ function getApiBaseSegment(originalUrl: string): string | null {
 }
 
 const CUSTOM_ROUTE_MAP: Record<string, string> = {
-  
+  // Botão "Atualizar" dos relatórios: antes das rotas dos relatórios (casa por substring, 1º que bater vence).
+  "integration-problems-report/refresh": REPORT_REFRESH_ENTITY,
+  "product-stock-flow/refresh": REPORT_REFRESH_ENTITY,
+  "sales-invoiced-report/refresh": REPORT_REFRESH_ENTITY,
+  "sales-return-report/refresh": REPORT_REFRESH_ENTITY,
+  "sale-transfer-invoice-report/refresh": REPORT_REFRESH_ENTITY,
+  "seller-commission-report/refresh": REPORT_REFRESH_ENTITY,
+  "affiliates-report/refresh": REPORT_REFRESH_ENTITY,
+  "sales-report/run": REPORT_REFRESH_ENTITY,
+  "seller-report/run": REPORT_REFRESH_ENTITY,
+  "daily-operation-report/run": REPORT_REFRESH_ENTITY,
   "financial-batch-info": "financial-pdt",
   "sales-report": "financial-pdt",
-  "sales-report/run" : "financial-pdt",
   "product-stock-flow": "financial-pdt",
   "sales-invoiced-report": "financial-pdt",
   "sales-return-report": "financial-pdt",
   "seller-commission-report": "financial-pdt",
   "integration-problems-report": "financial-pdt",
   "sale-transfer-invoice-report": "invoices",
+  // Relatório de afiliados do hub (sem .model.ts); não casa com "affiliated-report" (do próprio afiliado, sem permissão).
+  "affiliates-report": AFFILIATES_REPORT_ENTITY,
+  // Rotas sem model (resolveriam null = liberadas pra qualquer logado): mapeadas pra permissão existente.
+  "/api/bling-api-fetch": "integrations",
+  "/api/tecinco/sync": "integrations",
+  "/api/invoice-maintenance": "invoices",
+  "/api/invoice-logistic-occurrences": "invoices",
+  "/api/printer": "printer_configs",
   "multiplier-scan-inventory": "multiply-stk-inventory",
   "multiplier-scan-entrance": "multiply-stk-entrance",
    "all-unit-business": "visualize-all-unit-business",

@@ -27,8 +27,22 @@ jest.mock("../sales-report.repository", () => ({
   },
 }));
 
+// Sem mock, a invalidação do cache faz SCAN no Redis real e a conexão aberta não deixa o Jest sair.
+jest.mock("../../../helpers/report-cache", () => ({
+  __esModule: true,
+  cachedReport: jest.fn(),
+  invalidateReportCache: jest.fn(),
+  REPORT_CACHE_NAMES: {
+    salesReport: "sales-report",
+    salesInvoicedReport: "sales-invoiced-report",
+    affiliatesReport: "affiliates-report",
+    affiliatedReport: "affiliated-report",
+  },
+}));
+
 import { salesReportRepository } from "../sales-report.repository";
 import { SalesReportService } from "../sales-report.service";
+import { invalidateReportCache } from "../../../helpers/report-cache";
 
 const repo = salesReportRepository as unknown as Record<string, jest.Mock>;
 
@@ -84,5 +98,12 @@ describe("SalesReportService.runIncrementalJob", () => {
     ]);
     expect(repo.markSuccess).toHaveBeenCalledWith(expect.any(Date), 1200);
     expect(result.ordersProcessed).toBe(1200);
+    // Snapshots mudaram: cache do sales report, do faturado e dos dois relatórios de afiliado (mesmos snapshots) é invalidado no fim do job.
+    expect(invalidateReportCache).toHaveBeenCalledWith(
+      "sales-report",
+      "sales-invoiced-report",
+      "affiliates-report",
+      "affiliated-report",
+    );
   });
 });

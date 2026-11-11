@@ -22,6 +22,7 @@ class DailySalesFact
   public average_freight?: number | string;
   public average_ticket?: number | string;
   public total_commission?: number | string;
+  public total_affiliated_commission?: number | string;
 
   public total_cost?: number | string;
   public total_taxes?: number | string;
@@ -64,6 +65,8 @@ DailySalesFact.init(
       type: DataTypes.DECIMAL(14, 4),
       allowNull: true,
     },
+    // Comissão do afiliado somada dos snapshots.
+    total_affiliated_commission: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
     last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },

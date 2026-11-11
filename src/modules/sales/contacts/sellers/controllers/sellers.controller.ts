@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { authenticate } from "../../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../../middlewares/user-permissions";
+import { validateCreate, validateUpdate } from "../../../../../middlewares/validation";
+import { CreateContactWithUserSchema, UpdateContactWithUserSchema } from "../../schemas/contact.schema";
 import RouterController from "../../../../../shared/utils/base-models/base-router-controller";
 import sellerService from "../services/sellers.service";
 
@@ -33,24 +35,44 @@ class SellerController extends RouterController {
   constructor() {
     super();
     this.router.post(`/create-from-seller-name`, ...this.mw("createUserFromSellerName"), this.createUserFromSellerName);
+    this.router.post(`/with-user`, ...this.mw("createWithUser"), this.createWithUser);
     // Detalhe do contato (substitui o show do CRUD genérico): nomes de loja/grupo exigem unit-business, que o core não pode importar (ciclo).
     this.router.get(`/:id`, ...this.mw("show"), this.show);
     this.router.put(`/:id/manager-periods`, ...this.mw("updateManagerPeriods"), this.updateManagerPeriods);
+    this.router.put(`/:id/with-user`, ...this.mw("updateWithUser"), this.updateWithUser);
   }
 
-  // create-from-seller-name segue sem middleware (como antes da separação).
+  // create-from-seller-name segue sem middleware: a rota só responde 410 (inativada).
   protected middlewaresFor() {
     return {
       show: [authenticate, userPermissions],
       updateManagerPeriods: [authenticate, userPermissions],
+      createWithUser: [authenticate, validateCreate(CreateContactWithUserSchema), userPermissions],
+      updateWithUser: [authenticate, validateUpdate(UpdateContactWithUserSchema), userPermissions],
     };
   }
 
-  createUserFromSellerName = async (req: Request, res: Response): Promise<Response> => {
+  // Rota pública inativada: qualquer um que soubesse o nome de um vendedor criava a conta dele e saía logado.
+  // A lógica (sellerService.createUserFromSellerName) fica; usuário de vendedor é criado pelo POST /with-user.
+  createUserFromSellerName = async (_req: Request, res: Response): Promise<Response> =>
+    res.status(410).json({ error: "Cadastro de vendedor por nome desativado. Peça ao administrador para criar seu acesso." });
+
+  /** POST /with-user — cria User + Contact pra tipo com login (afiliado, vendedor). */
+  createWithUser = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { name, unitBusinessNumber, email, password } = req.body;
-      const record = await sellerService.createUserFromSellerName(name, unitBusinessNumber, email, password);
+      const record = await sellerService.createWithUser(req.body);
       return res.status(201).json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  /** PUT /:id/with-user — edita contato + usuário (nome, e-mail, telefone, senha, status) e devolve o detalhe do GET /:id. */
+  updateWithUser = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const record = await sellerService.updateWithUser(req.params.id as string, req.body);
+      if (!record) return res.status(404).json({ error: "Não encontrado" });
+      return res.json(record);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

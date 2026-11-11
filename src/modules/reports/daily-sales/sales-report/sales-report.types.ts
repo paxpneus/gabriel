@@ -13,6 +13,8 @@ export interface SalesReportFilters {
   brandIds?: string[];
   tireMeasure?: string;
   orderIds?: string[];
+  // Contact ids de afiliados; força o caminho por snapshots (facts não têm afiliado).
+  affiliatedIds?: string[];
 }
 
 export interface SalesReportJobResult {

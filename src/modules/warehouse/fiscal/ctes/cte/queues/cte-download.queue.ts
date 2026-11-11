@@ -113,4 +113,5 @@ export class CteXmlBatchQueue extends BaseQueueService<CteXmlBatchJobData> {
   }
 }
 
-export default new CteXmlBatchQueue();
+// workless:true explícito — sem isso, todo processo que importar este singleton (API, scripts, testes) sobe um Worker; o real vem do startWorkers().
+export default new CteXmlBatchQueue({ workless: true });

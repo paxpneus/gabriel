@@ -1,3 +1,4 @@
+import { cachedReport, REPORT_CACHE_NAMES } from "../../../../helpers/report-cache";
 import { getBlingIntegration } from "../../../../../handlers/bling/api/bling_api.service";
 import {
   SalesInvoicedReport,
@@ -17,6 +18,11 @@ export class SalesInvoicedReportService {
   constructor(
     private readonly repository: SalesInvoicedReportRepository = salesInvoicedReportRepository,
   ) {}
+
+  /** getReport com cache Redis de 1h por filtro; refresh=true recalcula e regrava (rota /refresh). */
+  async getCachedReport(params: SalesInvoicedReportParams, refresh = false) {
+    return cachedReport(REPORT_CACHE_NAMES.salesInvoicedReport, params, () => this.getReport(params), refresh);
+  }
 
   async getReport(
     params: SalesInvoicedReportParams,

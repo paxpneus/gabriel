@@ -1,5 +1,6 @@
 import { Request, Response, Router } from "express";
 import { authenticate } from "../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../middlewares/user-permissions";
 import DailyOperationReportService from "./daily-operation-report.service";
 
 class DailyOperationReportController {
@@ -8,12 +9,12 @@ class DailyOperationReportController {
   constructor() {
     this.router = Router();
     this.router.get("/", authenticate, this.index);
-    this.router.post("/run", authenticate, this.runJob);
+    this.router.post("/run", authenticate, userPermissions, this.runJob);
   }
 
   index = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const report = await DailyOperationReportService.getReport({
+      const report = await DailyOperationReportService.getCachedReport({
         date: String(req.query.date ?? req.query.data ?? ""),
         unitBusinessId: (req.query.unitBusinessId ??
           req.query.unit_business_id) as string | undefined,

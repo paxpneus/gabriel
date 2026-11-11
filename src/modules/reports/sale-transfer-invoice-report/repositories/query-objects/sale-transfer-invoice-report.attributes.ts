@@ -1,4 +1,5 @@
 import { FindAttributeOptions, Sequelize } from "sequelize";
+import sequelize from "../../../../../config/sequelize";
 import { totalExpectedLiteral } from "../../../../warehouse/fiscal/invoices/invoice/helpers/totals";
 
 export const SALE_INVOICE_ALIAS = "Invoice";
@@ -8,11 +9,12 @@ export function transferInvoiceColumnLiteral(
   column: "number_system" | "emitted_at",
   saleInvoiceAlias: string = SALE_INVOICE_ALIAS,
 ) {
+  const t = sequelize.getQueryInterface().quoteIdentifier(saleInvoiceAlias);
   return Sequelize.literal(`(
     SELECT ti.${column}
     FROM pdv_sales_requests psr
     JOIN invoices ti ON ti.id = psr.transfer_invoice_id
-    WHERE psr.sale_invoice_id = "${saleInvoiceAlias}"."id"
+    WHERE psr.sale_invoice_id = ${t}."id"
     ORDER BY psr.created_at DESC
     LIMIT 1
   )`);
@@ -22,6 +24,7 @@ export function transferInvoiceColumnLiteral(
 export function transferInvoiceStatusLiteral(
   saleInvoiceAlias: string = SALE_INVOICE_ALIAS,
 ) {
+  const t = sequelize.getQueryInterface().quoteIdentifier(saleInvoiceAlias);
   return Sequelize.literal(`(
     SELECT a.status
     FROM pdv_sales_requests psr
@@ -29,7 +32,7 @@ export function transferInvoiceStatusLiteral(
     JOIN unit_businesses ub ON ub.cnpj = ti.sender_cnpj
     JOIN invoice_unit_business_attributes a
       ON a.invoice_id = ti.id AND a.unit_business_id = ub.id
-    WHERE psr.sale_invoice_id = "${saleInvoiceAlias}"."id"
+    WHERE psr.sale_invoice_id = ${t}."id"
     ORDER BY psr.created_at DESC
     LIMIT 1
   )`);

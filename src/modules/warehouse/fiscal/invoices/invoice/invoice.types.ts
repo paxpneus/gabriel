@@ -24,6 +24,8 @@ export interface InvoiceAttributes {
   xml_path?: string | null;
   xml_key?: string | null;
   danfe_path?: string | null;
+  correction_letter_path?: string | null;
+  correction_letter_attached_at?: Date | null;
   store_id: string;
   sender_cnpj: string;
   sender_name: string;
@@ -85,6 +87,8 @@ export interface FullInvoiceAttributes {
   xml_path?: string | null;
   xml_key?: string | null;
   danfe_path?: string | null;
+  correction_letter_path?: string | null;
+  correction_letter_attached_at?: Date | null;
   store_id: string;
   sender_cnpj: string;
   sender_name: string;
@@ -148,6 +152,8 @@ export interface FullInvoiceAttributesForAllUnits {
   xml_path?: string | null;
   xml_key?: string | null;
   danfe_path?: string | null;
+  correction_letter_path?: string | null;
+  correction_letter_attached_at?: Date | null;
   store_id: string;
   sender_cnpj: string;
   sender_name: string;

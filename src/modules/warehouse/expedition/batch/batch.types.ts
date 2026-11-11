@@ -9,6 +9,17 @@ export const CLOSED_EXPEDITION_BATCH_STATUSES: readonly string[] = [
   "CANCELLED",
 ];
 
+// Justificativas prontas da carta de correção no romaneio (GET /batch/correction-letter/justifications).
+// O front troca "{notas}" pelos números das notas com carta de correção e manda o texto pronto na justificativa.
+export const CORRECTION_LETTER_JUSTIFICATIONS = [
+  {
+    code: "WRONG_CARRIER",
+    label: "Transportadora errada",
+    template:
+      "Nota emitida para a transportadora errada: foi emitida para a transportadora própria, mas era para ter ido por transportadora externa. Carta de correção atrelada à nota {notas}.",
+  },
+] as const;
+
 export interface ExpeditionBatchAttributes {
   id: string;
   number: string;
@@ -27,6 +38,7 @@ export interface ExpeditionBatchAttributes {
   delivery_note_generated_at?: Date | null;
   finished_at?: Date | null;
   operator_id?: string;
+  correction_letter_justification?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -56,6 +68,7 @@ export interface ExpeditionBatchFull {
   type?: string;
   mode?: string;
   operator_id?: string;
+  correction_letter_justification?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   batchWithTotalVolumes?: EnrichedBatchInvoice[];

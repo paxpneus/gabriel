@@ -12,6 +12,7 @@ const ENTITY_LABELS: Record<AuditEntity, string> = {
   [AuditEntity.SUPPLIER_MAPPING]: "Mapeamento DE x PARA",
   [AuditEntity.INTEGRATION_MAPPING]: "Mapeamento de integração",
   [AuditEntity.EXPEDITION_BATCH]: "Lote de expedição",
+  [AuditEntity.INVOICE]: "Nota fiscal",
 };
 
 const ACTION_LABELS: Record<AuditAction, string> = {
@@ -35,6 +36,8 @@ const FIELD_LABELS: Record<string, string> = {
   is_active: "Ativo",
   delivery_note_generated_at: "Romaneio gerado em",
   operator_name: "Operador",
+  correction_letter_justification: "Justificativa da carta de correção",
+  correction_letter_attached_at: "Carta de correção anexada em",
 };
 
 // Valor curto e estável pro texto: null/undefined viram "—", booleano vira sim/não, data em horário de Brasília, objeto vira JSON.

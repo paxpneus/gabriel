@@ -2,6 +2,7 @@ import BaseController from '../../../shared/utils/base-models/base-controller';
 import Supplier from './supplier.model';
 import SupplierService from './supplier.service';
 import { authenticate } from '../../../middlewares/auth-token';
+import { userPermissions } from "../../../middlewares/user-permissions";
 
 export class SupplierController extends BaseController<Supplier, typeof SupplierService> {
   constructor() {
@@ -13,12 +14,12 @@ export class SupplierController extends BaseController<Supplier, typeof Supplier
     return {
       index: [authenticate],
       show: [authenticate],
-      create: [authenticate],
-      bulkCreate: [authenticate],
-      update: [authenticate],
-      bulkUpdate: [authenticate],
-      destroy: [authenticate],
-      bulkDestroy: [authenticate],
+      create: [authenticate, userPermissions],
+      bulkCreate: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 }

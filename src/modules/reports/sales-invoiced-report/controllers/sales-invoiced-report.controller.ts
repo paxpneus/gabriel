@@ -32,9 +32,14 @@ class SalesInvoicedReportController {
   constructor() {
     this.router = Router();
     this.router.get("/", authenticate, userPermissions, this.index);
+    this.router.post("/refresh", authenticate, userPermissions, this.refresh);
   }
 
-  index = async (req: Request, res: Response): Promise<Response> => {
+  // GET / com cache de 1h; POST /refresh (permissão "Atualizar relatórios") = mesmo contrato, ignora o cache, recalcula e regrava.
+  index = (req: Request, res: Response) => this.respond(req, res, false);
+  refresh = (req: Request, res: Response) => this.respond(req, res, true);
+
+  private respond = async (req: Request, res: Response, refresh: boolean): Promise<Response> => {
     const parsed = SalesInvoicedReportQuerySchema.safeParse({
       start_date: req.query.start_date,
       end_date: req.query.end_date,
@@ -47,10 +52,10 @@ class SalesInvoicedReportController {
     }
 
     try {
-      const report = await salesInvoicedReportService.getReport({
-        startDate: parsed.data.start_date,
-        endDate: parsed.data.end_date,
-      });
+      const report = await salesInvoicedReportService.getCachedReport(
+        { startDate: parsed.data.start_date, endDate: parsed.data.end_date },
+        refresh,
+      );
       return res.json(report);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

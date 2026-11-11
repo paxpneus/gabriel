@@ -44,6 +44,8 @@ export interface SalesOrderItemSnapshotAttributes {
   commission_base?: number | string;
   commission_rate?: number | string;
   commission_value?: number | string;
+  // Comissão do afiliado (order_coupons), rateada/somada igual à do vendedor.
+  affiliated_commission_value?: number | string;
 
   ncm?: string | null;
   cest?: string | null;

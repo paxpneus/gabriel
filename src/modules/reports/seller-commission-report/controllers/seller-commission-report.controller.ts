@@ -29,9 +29,14 @@ class SellerCommissionReportController {
   constructor() {
     this.router = Router();
     this.router.get("/", authenticate, userPermissions, this.index);
+    this.router.post("/refresh", authenticate, userPermissions, this.refresh);
   }
 
-  index = async (req: Request, res: Response): Promise<Response> => {
+  // GET / com cache de 1h; POST /refresh (permissão "Atualizar relatórios") = mesmo contrato, ignora o cache, recalcula e regrava.
+  index = (req: Request, res: Response) => this.respond(req, res, false);
+  refresh = (req: Request, res: Response) => this.respond(req, res, true);
+
+  private respond = async (req: Request, res: Response, refresh: boolean): Promise<Response> => {
     const parsed = SellerCommissionReportQuerySchema.safeParse({
       start_date: req.query.start_date,
       end_date: req.query.end_date,
@@ -50,16 +55,19 @@ class SellerCommissionReportController {
     }
 
     try {
-      const report = await sellerCommissionReportService.getReport({
-        startDate: parsed.data.start_date,
-        endDate: parsed.data.end_date,
-        brands: parsed.data.brand,
-        productIds: parsed.data.product_id,
-        sellerIds: parsed.data.seller_id,
-        managerIds: parsed.data.manager_id,
-        unitBusinessIds: parsed.data.unit_business_id,
-        originUnitBusinessIds: parsed.data.origin_unit_business_id,
-      });
+      const report = await sellerCommissionReportService.getCachedReport(
+        {
+          startDate: parsed.data.start_date,
+          endDate: parsed.data.end_date,
+          brands: parsed.data.brand,
+          productIds: parsed.data.product_id,
+          sellerIds: parsed.data.seller_id,
+          managerIds: parsed.data.manager_id,
+          unitBusinessIds: parsed.data.unit_business_id,
+          originUnitBusinessIds: parsed.data.origin_unit_business_id,
+        },
+        refresh,
+      );
       return res.json(report);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

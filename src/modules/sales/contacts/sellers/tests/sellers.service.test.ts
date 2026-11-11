@@ -34,6 +34,7 @@ jest.mock("../../../../company/users/users/user.service", () => ({
   default: {
     findOne: jest.fn(),
     createUserWithValidation: jest.fn(),
+    updateUserWithValidation: jest.fn(),
     login: jest.fn(),
   },
 }));
@@ -377,11 +378,11 @@ describe("SellerService.findDetail", () => {
 
   beforeEach(() => {
     service = new SellerService();
-    (service as any).repository = { findById: jest.fn() };
+    (service as any).repository = { findByIdWithUser: jest.fn() };
   });
 
   it("põe { name } da loja e do grupo em cada período (null sem id), uma busca por tabela", async () => {
-    (service as any).repository.findById.mockResolvedValue({
+    (service as any).repository.findByIdWithUser.mockResolvedValue({
       toJSON: () => ({
         id: "c1",
         custom_data: {
@@ -410,13 +411,161 @@ describe("SellerService.findDetail", () => {
 
   it("contato sem períodos volta como está, sem buscar loja/grupo", async () => {
     unitBusinessService.findAll.mockClear();
-    (service as any).repository.findById.mockResolvedValue({ toJSON: () => ({ id: "c1", custom_data: null }) });
-    await expect(service.findDetail("c1")).resolves.toEqual({ id: "c1", custom_data: null });
+    (service as any).repository.findByIdWithUser.mockResolvedValue({ toJSON: () => ({ id: "c1", custom_data: null }) });
+    await expect(service.findDetail("c1")).resolves.toEqual({ id: "c1", custom_data: null, user: null });
     expect(unitBusinessService.findAll).not.toHaveBeenCalled();
   });
 
+  it("traz o usuário só com id/email/phone e status Ativo/Inativo (de users.active)", async () => {
+    const user = { id: "u1", email: "a@b.com", phone: null, active: false };
+    (service as any).repository.findByIdWithUser.mockResolvedValue({
+      user,
+      toJSON: () => ({ id: "c1", custom_data: null, user }),
+    });
+    await expect(service.findDetail("c1")).resolves.toEqual({
+      id: "c1",
+      custom_data: null,
+      user: { id: "u1", email: "a@b.com", phone: null, status: "Inativo" },
+    });
+  });
+
   it("contato inexistente volta null (404 no controller)", async () => {
-    (service as any).repository.findById.mockResolvedValue(null);
+    (service as any).repository.findByIdWithUser.mockResolvedValue(null);
     await expect(service.findDetail("c1")).resolves.toBeNull();
+  });
+});
+
+// ─── createWithUser ───────────────────────────────────────────────────────────
+
+describe("SellerService.createWithUser", () => {
+  let service: SellerService;
+  const baseDto = {
+    name: "Afiliado Teste",
+    cpf: "12345678909",
+    email: "afiliado@email.com",
+    password: "senha12345",
+    phone: "11999999999",
+  };
+  const createdUser = {
+    id: "user-uuid",
+    name: baseDto.name,
+    email: baseDto.email,
+    cpf: baseDto.cpf,
+    phone: baseDto.phone,
+    unit_business_id: "ub21-uuid",
+    password: "hash",
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new SellerService();
+    (service as any).repository = {
+      create: jest.fn().mockImplementation(async (data) => ({ id: "contact-uuid", ...data })),
+    };
+    (roleService.findOne as jest.Mock).mockImplementation(async ({ where }) => ({ id: `role-${where.name}` }));
+    (unitBusinessService.findOne as jest.Mock).mockResolvedValue({ id: "ub21-uuid" });
+    (userService.createUserWithValidation as jest.Mock).mockResolvedValue(createdUser);
+  });
+
+  it("AFFILIATED: fixa a loja 21, usa a role Afiliado e cria contact sem id_system", async () => {
+    const result = await service.createWithUser({ ...baseDto, type: "AFFILIATED", unit_business_id: "ignored-uuid" });
+
+    expect(roleService.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { name: "Afiliado" }, attributes: ["id"] }),
+    );
+    expect(unitBusinessService.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { number: "21" }, attributes: ["id"] }),
+    );
+    expect(userService.createUserWithValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ unit_business_id: "ub21-uuid", role_id: "role-Afiliado", type: "affiliated", phone: baseDto.phone }),
+      mockTransaction,
+    );
+
+    const contactData = (service as any).repository.create.mock.calls[0][0];
+    expect(contactData).toEqual(
+      expect.objectContaining({ type: "AFFILIATED", document: baseDto.cpf, unit_business_id: "ub21-uuid", user_id: "user-uuid" }),
+    );
+    expect(contactData).not.toHaveProperty("id_system");
+    expect(contactData).not.toHaveProperty("custom_data");
+    expect(result.user).not.toHaveProperty("password");
+    expect(result.user).toEqual(expect.objectContaining({ id: "user-uuid", type: "affiliated" }));
+  });
+
+  it("SELLER: exige unit_business_id", async () => {
+    await expect(service.createWithUser({ ...baseDto, type: "SELLER" })).rejects.toThrow("obrigatória");
+    expect(userService.createUserWithValidation).not.toHaveBeenCalled();
+  });
+
+  it("SELLER: usa a loja informada e a role Vendedor", async () => {
+    await service.createWithUser({ ...baseDto, type: "SELLER", unit_business_id: "ub-x" });
+
+    expect(unitBusinessService.findOne).not.toHaveBeenCalled();
+    expect(userService.createUserWithValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ unit_business_id: "ub-x", role_id: "role-Vendedor", type: "seller" }),
+      mockTransaction,
+    );
+  });
+
+  it("CUSTOMER e SELLER_MANAGER: tipo sem config não permite criar usuário", async () => {
+    await expect(service.createWithUser({ ...baseDto, type: "CUSTOMER" })).rejects.toThrow(
+      'Tipo de contato "CUSTOMER" não permite criar usuário',
+    );
+    await expect(service.createWithUser({ ...baseDto, type: "SELLER_MANAGER" })).rejects.toThrow(
+      'Tipo de contato "SELLER_MANAGER" não permite criar usuário',
+    );
+  });
+});
+
+// ─── updateWithUser ───────────────────────────────────────────────────────────
+
+describe("SellerService.updateWithUser", () => {
+  let service: SellerService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new SellerService();
+    (service as any).repository = {
+      findById: jest.fn().mockResolvedValue({ id: "c1", user_id: "u1" }),
+      update: jest.fn(),
+      findByIdWithUser: jest.fn().mockResolvedValue({ toJSON: () => ({ id: "c1", custom_data: null }), user: null }),
+    };
+  });
+
+  it("atualiza usuário e contato na mesma transação, com o mesmo nome; status vira active", async () => {
+    await service.updateWithUser("c1", { name: "Novo Nome", password: "senha12345", status: "Inativo" });
+
+    expect((service as any).repository.findById).toHaveBeenCalledWith(
+      "c1",
+      expect.objectContaining({ transaction: mockTransaction, lock: "UPDATE" }),
+    );
+    expect(userService.updateUserWithValidation).toHaveBeenCalledWith(
+      "u1",
+      { name: "Novo Nome", password: "senha12345", active: false },
+      mockTransaction,
+    );
+    expect((service as any).repository.update).toHaveBeenCalledWith("c1", { name: "Novo Nome" }, { transaction: mockTransaction });
+    expect((service as any).repository.findByIdWithUser).toHaveBeenCalledWith("c1");
+  });
+
+  it("sem nome no corpo não mexe no contato; sem senha/status não manda esses campos", async () => {
+    await service.updateWithUser("c1", { email: "x@y.com" });
+
+    expect(userService.updateUserWithValidation).toHaveBeenCalledWith("u1", { email: "x@y.com" }, mockTransaction);
+    expect((service as any).repository.update).not.toHaveBeenCalled();
+  });
+
+  it("contato inexistente volta null; contato sem usuário dá erro", async () => {
+    (service as any).repository.findById.mockResolvedValueOnce(null);
+    await expect(service.updateWithUser("c1", { name: "Abc" })).resolves.toBeNull();
+
+    (service as any).repository.findById.mockResolvedValueOnce({ id: "c1", user_id: null });
+    await expect(service.updateWithUser("c1", { name: "Abc" })).rejects.toThrow("Este contato não tem usuário para editar");
+    expect(userService.updateUserWithValidation).not.toHaveBeenCalled();
+  });
+
+  it("e-mail de outro usuário: repassa o erro do user.service", async () => {
+    (userService.updateUserWithValidation as jest.Mock).mockRejectedValueOnce(new Error("Outro usuário já possui este email"));
+    await expect(service.updateWithUser("c1", { email: "x@y.com" })).rejects.toThrow("Outro usuário já possui este email");
+    expect((service as any).repository.update).not.toHaveBeenCalled();
   });
 });

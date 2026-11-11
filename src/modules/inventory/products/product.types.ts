@@ -124,6 +124,8 @@ export interface ProductSalesReportRow {
   markup_pct: number;
   average_cost: number;
   commission_value: number;
+  // Comissão do afiliado rateada nos itens (já dentro de total_cost/contribution).
+  affiliated_comission: number;
 }
 
 // Modo da auto busca de pneu: IN_BATCH (bipe em lote de entrada/expedição) só sugere item do lote que falta bipar.

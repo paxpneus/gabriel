@@ -31,6 +31,10 @@ type Scopes =
   | 'PDV CD21'
   | 'Confirmar EAN físico'
   | 'Criar e mapear produto na nota'
+  | 'Atualizar relatórios'
+  | 'Relatório de Afiliados'
+  | 'Contatos'
+  | 'Cupons'
 
 interface ChildEntity {
   entity: string
@@ -53,6 +57,12 @@ export const PHYSICAL_EAN_OWNER_ENTITY = 'physical_ean_owner'
 
 // Entidade RBAC de criar/mapear produto na nota (create-product-and-map e /add/item) — usada no CUSTOM_ROUTE_MAP.
 export const INVOICE_PRODUCT_MAPPING_ENTITY = 'invoice_product_mapping'
+
+// Entidade RBAC do botão "Atualizar" dos relatórios (/refresh e /run) — usada no CUSTOM_ROUTE_MAP.
+export const REPORT_REFRESH_ENTITY = 'report_refresh'
+
+// Entidade RBAC do relatório de afiliados do hub (/api/affiliates-report) — usada no CUSTOM_ROUTE_MAP.
+export const AFFILIATES_REPORT_ENTITY = 'affiliates_report'
 
 export const ROLE_PERMISSIONS: Roles[] = [
     {
@@ -85,6 +95,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
       { entity: 'order_items',   label: 'Itens do Pedido' },
       { entity: 'order_history', label: 'Histórico' },
       { entity: 'customers',     label: 'Clientes' },
+      { entity: 'stores',        label: 'Canais de venda' },
       { entity: 'steps',         label: 'Etapas' },
     ],
   },
@@ -306,6 +317,41 @@ export const ROLE_PERMISSIONS: Roles[] = [
     route: '',
     type: 'CUSTOM',
     permissions: ['write'],
+  },
+  // Botão "Atualizar" dos relatórios (recalcula ignorando o cache de 1h / roda o job): admin/developer sempre; outros papéis só com essa permissão.
+  {
+    scope: 'Atualizar relatórios',
+    entity: REPORT_REFRESH_ENTITY,
+    route: '',
+    type: 'CUSTOM',
+    permissions: ['write'],
+  },
+  // Relatório de afiliados (vendas, lucro e comissão devida por afiliado): admin/developer sempre; outros papéis só com essa permissão.
+  {
+    scope: 'Relatório de Afiliados',
+    entity: AFFILIATES_REPORT_ENTITY,
+    route: '',
+    type: 'CUSTOM',
+    permissions: ['read'],
+  },
+  // Contacts CRUD + /with-user (creates User + Contact, e.g. affiliates).
+  {
+    scope: 'Contatos',
+    entity: 'contacts',
+    route: 'contacts',
+    permissions: all,
+    type: 'REGULAR',
+  },
+  // Coupons; affiliate ↔ coupon links (contact_coupons) inherit from this parent.
+  {
+    scope: 'Cupons',
+    entity: 'coupons',
+    route: 'coupons',
+    permissions: all,
+    type: 'REGULAR',
+    children: [
+      { entity: 'contact_coupons', label: 'Cupons de Afiliado' },
+    ],
   },
 ]
 

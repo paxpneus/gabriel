@@ -18,6 +18,8 @@ export const FINALIZERS: Record<
     unmappedInvoiceProductService.update(entityId, { image_path: realPath }),
   INVOICE_DANFE: (entityId, realPath) =>
     invoiceService.update(entityId, { danfe_path: realPath }),
+  INVOICE_CORRECTION_LETTER: (entityId, realPath) =>
+    invoiceService.update(entityId, { correction_letter_path: realPath }),
   CTE: async (entityId, realPath) => {
     const existing = await JobTracker.get(entityId);
     if (!existing) return null; // tracker expirou (TTL 1h) — nada pra notificar
@@ -62,6 +64,12 @@ export const FINALIZE_CHECKERS: Record<
     return isTempFileSentinelPath(invoice.danfe_path)
       ? "still-sentinel"
       : "already-real";
+  },
+  // Sempre nasce com o sentinela temp:// (attachCorrectionLetter); vazio = carta trocada/removida, nada a finalizar.
+  INVOICE_CORRECTION_LETTER: async (entityId) => {
+    const invoice = await invoiceService.findById(entityId, { attributes: ["id", "correction_letter_path"] });
+    if (!invoice?.correction_letter_path) return "missing";
+    return isTempFileSentinelPath(invoice.correction_letter_path) ? "still-sentinel" : "already-real";
   },
   CTE: async (entityId) => {
     const state = await JobTracker.get(entityId);

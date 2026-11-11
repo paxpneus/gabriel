@@ -3,6 +3,7 @@ import { spawn } from "child_process";
 import path from "path";
 import { Request, Response, Router } from "express";
 import { authenticate } from "../../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../../middlewares/user-permissions";
 
 const SCRIPTS_DIR = path.resolve(__dirname, "../../../../../scripts");
 const IS_COMPILED = __filename.endsWith(".js");
@@ -28,7 +29,8 @@ function runScript(relativePath: string) {
 }
 
 const router = Router();
-router.post("/reprocess-return-invoices", authenticate, runScript("bling/reprocess-return-invoices"));
-router.post("/open-return-invoices", authenticate, runScript("invoices/open-return-invoices"));
+// Dispara script com spawn: exige permissão de escrita em Notas (CUSTOM_ROUTE_MAP), não só login.
+router.post("/reprocess-return-invoices", authenticate, userPermissions, runScript("bling/reprocess-return-invoices"));
+router.post("/open-return-invoices", authenticate, userPermissions, runScript("invoices/open-return-invoices"));
 
 export default router;

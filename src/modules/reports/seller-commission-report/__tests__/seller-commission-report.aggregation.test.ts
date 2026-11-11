@@ -27,6 +27,8 @@ const item = (overrides: Partial<SellerCommissionItemRow> = {}): SellerCommissio
   regional_manager_names: "Regional A",
   regional_manager_commission_rate: "0.2500",
   regional_manager_commission_value: "0.23",
+  affiliated_name: null,
+  affiliated_commission_value: "0.00",
   ...overrides,
 });
 
@@ -66,7 +68,32 @@ describe("buildReportRows / buildSummary", () => {
       total_seller_commission: 0.55,
       total_manager_commission: 0.3,
       total_regional_manager_commission: 0.23,
+      total_affiliated_commission: 0,
       total_commission: 1.08,
+    });
+  });
+
+  it("pedido só de afiliado: sem vendedor, comissão do afiliado entra no total", () => {
+    const items = [
+      item({
+        seller_name: null,
+        commission_value: 0,
+        manager_commission_value: 0,
+        regional_manager_commission_value: 0,
+        affiliated_name: "Afiliado A",
+        affiliated_commission_value: "1.25",
+      }),
+    ];
+
+    expect(buildReportRows(items)[0]).toMatchObject({
+      seller_name: null,
+      affiliated_name: "Afiliado A",
+      affiliated_commission_value: 1.25,
+    });
+    expect(buildSummary(items)).toMatchObject({
+      total_seller_commission: 0,
+      total_affiliated_commission: 1.25,
+      total_commission: 1.25,
     });
   });
 });
