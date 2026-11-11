@@ -40,7 +40,7 @@ jest.mock("../../../../../config/sequelize", () => ({
 
 jest.mock("../../../fiscal/invoices/invoice/invoice.service", () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), findOne: jest.fn() },
+  default: { findAll: jest.fn(), findOne: jest.fn(), findTransfersToReceiverByNumbers: jest.fn() },
 }));
 
 jest.mock(
@@ -70,7 +70,10 @@ jest.mock("../../batch-invoices/batch-invoices.service", () => ({
 
 jest.mock("../../../transporter/transporter.service", () => ({
   __esModule: true,
-  default: { findById: jest.fn() },
+  default: {
+    findById: jest.fn(),
+    isNoTransporterName: (name?: string | null) => !(name ?? "").trim() || name!.trim().toLowerCase() === "sem transporte",
+  },
 }));
 
 jest.mock("../../../../../shared/utils/normalizers/batch-nomenclature", () => ({
@@ -808,7 +811,9 @@ describe("ExpeditionBatchService — conciliação dos produtos na Bling (lote d
     getJob = jest.fn();
     add = jest.fn();
     (service as any).blingApiFetchQueue = { queue: { getJob }, add };
-    (unitBusinessService.findOne as jest.Mock).mockResolvedValue({ id: "ub-1", number: "01" });
+    // Trava só vale na entrada do CD21.
+    (unitBusinessService.findOne as jest.Mock).mockResolvedValue({ id: "ub-1", number: "21" });
+    (unitBusinessService as any).findById = jest.fn().mockResolvedValue({ id: "ub-1", number: "21" });
     (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue([]);
     (pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock).mockResolvedValue(undefined);
     // Sentinela: só chega aqui se a trava de conciliação deixou passar.
@@ -818,6 +823,16 @@ describe("ExpeditionBatchService — conciliação dos produtos na Bling (lote d
   describe("generateBatchFromInvoices", () => {
     it("nota que não é da Bling: não exige avaliação", async () => {
       (invoiceService.findAll as jest.Mock).mockResolvedValue([makeInvoice({ integrations_id: "tecinco-int" })]);
+
+      await expect(service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING")).rejects.toThrow(
+        "SENTINEL_PASSOU",
+      );
+      expect(getJob).not.toHaveBeenCalled();
+    });
+
+    it("entrada em loja que não é o CD21 com nota Bling: não exige avaliação", async () => {
+      (unitBusinessService.findOne as jest.Mock).mockResolvedValue({ id: "ub-1", number: "12" });
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
 
       await expect(service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING")).rejects.toThrow(
         "SENTINEL_PASSOU",
@@ -951,12 +966,23 @@ describe("ExpeditionBatchService — conciliação dos produtos na Bling (lote d
   });
 
   describe("enqueueBlingReconciliationCheck", () => {
+    it("loja que não é o CD21: não avalia, devolve jobId null", async () => {
+      (unitBusinessService as any).findById = jest.fn().mockResolvedValue({ id: "ub-1", number: "12" });
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+
+      await expect(
+        service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"], unitBusinessId: "ub-1" }),
+      ).resolves.toMatchObject({ jobId: null });
+      expect(add).not.toHaveBeenCalled();
+    });
+
+
     it("sem nota Bling: não enfileira e devolve jobId null", async () => {
       (invoiceService.findAll as jest.Mock).mockResolvedValue([
         { id: "invoice-1", integrations_id: "tecinco-int", number_system: "1" },
       ]);
 
-      await expect(service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"] })).resolves.toMatchObject({
+      await expect(service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"], unitBusinessId: "ub-1" })).resolves.toMatchObject({
         jobId: null,
       });
       expect(add).not.toHaveBeenCalled();
@@ -967,7 +993,7 @@ describe("ExpeditionBatchService — conciliação dos produtos na Bling (lote d
         { id: "invoice-1", integrations_id: "bling-int", id_system: "26454378751", number_system: "438864" },
       ]);
 
-      const result = await service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"] });
+      const result = await service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"], unitBusinessId: "ub-1" });
 
       expect(result.jobId).toMatch(/^bling-invoice-items-check-/);
       expect(add).toHaveBeenCalledWith(
@@ -986,7 +1012,7 @@ describe("ExpeditionBatchService — conciliação dos produtos na Bling (lote d
       ]);
       getJob.mockResolvedValue({ getState: jest.fn().mockResolvedValue("active") });
 
-      const result = await service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"] });
+      const result = await service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"], unitBusinessId: "ub-1" });
 
       expect(result).toMatchObject({ jobId: null, syncing: true });
       expect(result.message).toMatch(/Aguarde a sincronização da\(s\) nota\(s\) 438864/);
@@ -1003,7 +1029,7 @@ describe("ExpeditionBatchService — conciliação dos produtos na Bling (lote d
         { invoice_id: "invoice-2", reason: "EAN ausente — apenas SKU salvo" },
       ]);
 
-      await service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1", "invoice-2"] });
+      await service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1", "invoice-2"], unitBusinessId: "ub-1" });
 
       expect(add).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1017,7 +1043,7 @@ describe("ExpeditionBatchService — conciliação dos produtos na Bling (lote d
     it("nota não encontrada: erro com a chave", async () => {
       (invoiceService.findAll as jest.Mock).mockResolvedValue([]);
 
-      await expect(service.enqueueBlingReconciliationCheck({ invoiceKeys: ["CHAVE-1"] })).rejects.toThrow(
+      await expect(service.enqueueBlingReconciliationCheck({ invoiceKeys: ["CHAVE-1"], unitBusinessId: "ub-1" })).rejects.toThrow(
         "Nota(s) não encontrada(s): CHAVE-1",
       );
     });
@@ -1204,5 +1230,88 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
       "Este romaneio é desta própria loja.",
     );
     expect(service.generateBatchFromInvoices).not.toHaveBeenCalled();
+  });
+
+  describe("regra CD21: loja 12/17 lendo romaneio do CD21 gera lote das notas de transferência", () => {
+    const CD21_CNPJ = "99999999000199";
+    const sale = (id: string, number: string, reference: string | null, transporter: string | null) => ({
+      ...invoice(id, number, CD21_CNPJ, "55555555000155"),
+      transfer_invoice_reference: reference,
+      transporter_name: transporter,
+    });
+
+    const setUnits = (readerNumber: string) => {
+      (unitBusinessService as any).findById = jest.fn().mockImplementation((id: string) =>
+        Promise.resolve(
+          id === "ub-cd21"
+            ? { id, cnpj: CD21_CNPJ, number: "21" }
+            : { id, cnpj: STORE_CNPJ, number: readerNumber, transshipment_allowed: false },
+        ),
+      );
+    };
+
+    beforeEach(() => {
+      (service.findById as jest.Mock).mockResolvedValue({ id: "src-batch", type: "OUTGOING", unit_business_id: "ub-cd21" });
+      setUnits("12");
+    });
+
+    it.each(["LOGISTICA PAX PNEUS SP - CD 12", "LOGISTICA PAX PNEUS PR - CD 17", "Sem transporte", null])(
+      "transportadora %s → entrada das notas de transferência (REF de cada venda)",
+      async (transporter) => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([
+          sale("inv-1", "1001", "REF: 437", transporter),
+          sale("inv-2", "1002", "REF: 0438", transporter),
+        ]);
+        (invoiceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([
+          { id: "tr-1", number_system: "000437", normalized_number: "437" },
+          { id: "tr-2", number_system: "438", normalized_number: "438" },
+        ]);
+
+        await service.generateBatchFromQrCode("src-batch", "ub-1", undefined, "REGULAR", "job-1");
+
+        expect(invoiceService.findTransfersToReceiverByNumbers).toHaveBeenCalledWith(["437", "438"], STORE_CNPJ);
+        expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
+          ["tr-1", "tr-2"], "ub-1", "INCOMING", "REGULAR", "job-1",
+        );
+      },
+    );
+
+    it("venda sem REF → erro e nenhum lote", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([sale("inv-1", "1001", null, null)]);
+
+      await expect(service.generateBatchFromQrCode("src-batch", "ub-1")).rejects.toThrow(
+        "Nota(s) de venda sem número da nota de transferência: 1001.",
+      );
+      expect(service.generateBatchFromInvoices).not.toHaveBeenCalled();
+    });
+
+    it("transferência não encontrada pra esta loja → erro com número e venda", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([sale("inv-1", "1001", "REF: 437", null)]);
+      (invoiceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([]);
+
+      await expect(service.generateBatchFromQrCode("src-batch", "ub-1")).rejects.toThrow(
+        "437 (ref. a nota de venda 1001)",
+      );
+    });
+
+    it("tipo expedição pedido → erro (transferência é entrada)", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([sale("inv-1", "1001", "REF: 437", null)]);
+
+      await expect(service.generateBatchFromQrCode("src-batch", "ub-1", "OUTGOING")).rejects.toThrow(
+        "são de entrada nesta loja",
+      );
+    });
+
+    it.each([
+      ["loja leitora não é 12/17", "05", "LOGISTICA PAX PNEUS SP - CD 12"],
+      ["transportadora externa", "12", "JADLOG"],
+    ])("%s → fluxo normal (sem transferência)", async (_case, readerNumber, transporter) => {
+      setUnits(readerNumber);
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([sale("inv-1", "1001", "REF: 437", transporter)]);
+
+      await service.generateBatchFromQrCode("src-batch", "ub-1").catch(() => undefined);
+
+      expect(invoiceService.findTransfersToReceiverByNumbers).not.toHaveBeenCalled();
+    });
   });
 });

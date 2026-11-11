@@ -1435,6 +1435,28 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     return new Set(rows.map((row) => (row as unknown as { normalized_number: string }).normalized_number));
   }
 
+  // Notas de transferência (emitente = outra loja própria, destinatário = receiverCnpj) com esses números, sem zeros à esquerda;
+  // usada pelo QR do romaneio CD21 (a transferência pode sair de qualquer loja, não só do CD21).
+  async findTransfersToReceiverByNumbers(
+    numbers: string[],
+    receiverCnpj: string,
+  ): Promise<Array<{ id: string; number_system: string; normalized_number: string }>> {
+    if (!numbers.length) return [];
+    const unitBusinessCnpjs = await this.findAllUnitBusinessCnpjs();
+    const normalizedNumber = fn("LTRIM", col("number_system"), "0");
+    const rows = await this.model.findAll({
+      attributes: ["id", "number_system", [normalizedNumber, "normalized_number"]],
+      where: {
+        [Op.and]: [
+          Sequelize.where(normalizedNumber, { [Op.in]: numbers }),
+          { sender_cnpj: { [Op.in]: unitBusinessCnpjs, [Op.ne]: receiverCnpj }, receiver_cnpj: receiverCnpj },
+        ],
+      },
+      raw: true,
+    });
+    return rows as unknown as Array<{ id: string; number_system: string; normalized_number: string }>;
+  }
+
   // Notas cuja transfer_invoice_reference aponta pra um desses números — mesma extração de extractTransferReferenceNumber
   // (1º grupo de dígitos, sem zeros à esquerda). Nota de venda cancelada não segura a transferência: fica de fora.
   async findByTransferReferenceNumbers(

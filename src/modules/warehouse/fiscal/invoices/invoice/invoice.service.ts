@@ -841,6 +841,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     if (problem) throw new Error(problem);
   }
 
+  // Notas de transferência de outra loja própria pra receiverCnpj com esses números (repository normaliza zeros à esquerda).
+  async findTransfersToReceiverByNumbers(numbers: string[], receiverCnpj: string) {
+    return this.repository.findTransfersToReceiverByNumbers(numbers, receiverCnpj);
+  }
+
   // Escrita de transfer_invoice_reference (PUT /:id, PUT /bulk, lote): valida as notas alvo; limpar (vazio/null) passa direto.
   private async assertTransferReferenceWrite(
     data: { transfer_invoice_reference?: string | null },

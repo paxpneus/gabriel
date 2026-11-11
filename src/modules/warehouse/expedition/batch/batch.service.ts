@@ -71,6 +71,8 @@ import { AuditEntity } from "../../../global/audit-logs/audit-log.types";
 import userService from "../../../company/users/users/user.service";
 import { deliveryNoteGeneratedAudit } from "./helpers/audit";
 import { assertAdtBatchTransferReferences } from "./helpers/transfer-reference";
+import { isCd21TransferQrRule, resolveCd21TransferInvoiceIds } from "./helpers/cd21-transfer-qr";
+import { CD21_UNIT_BUSINESS_NUMBER } from "../../../company/unit-business/helpers/cd21-unit-business-number";
 import {
   assertAdtTransporterCd,
   describeTransporterSelector,
@@ -276,6 +278,11 @@ export class ExpeditionBatchService extends BaseService<
     return { batch, batchInvoices, totalVolumesAdded };
   }
 
+  // Conciliação na Bling só na entrada do CD21 (uma vez, quando a nota chega ao CD); demais lojas/etapas não validam.
+  private isCd21Entrance(type: string | undefined, unitBusinessNumber: string | null | undefined): boolean {
+    return type === "INCOMING" && unitBusinessNumber === CD21_UNIT_BUSINESS_NUMBER;
+  }
+
   /**
    * 1ª etapa do lote de entrada: enfileira na BLING_API_FETCH a busca dos itens das notas Bling e devolve o jobId
    * pro front acompanhar. jobId null = nenhuma nota da Bling, pode gerar o lote direto.
@@ -283,6 +290,7 @@ export class ExpeditionBatchService extends BaseService<
   async enqueueBlingReconciliationCheck(params: {
     invoiceIds?: string[];
     invoiceKeys?: string[];
+    unitBusinessId?: string;
   }): Promise<{ jobId: string | null; message: string; syncing?: boolean }> {
     const invoiceIds = [...new Set((params.invoiceIds ?? []).filter(Boolean))];
     const invoiceKeys = [
@@ -308,6 +316,14 @@ export class ExpeditionBatchService extends BaseService<
     const missing = expected.filter((value) => !found.has(value));
     if (missing.length) {
       throw new Error(`Nota(s) não encontrada(s): ${missing.join(", ")}`);
+    }
+
+    // Fora da entrada do CD21 não há avaliação: o front gera o lote direto.
+    const readerUnit = params.unitBusinessId
+      ? await unitBusinessService.findById(params.unitBusinessId, { attributes: ["id", "number"] })
+      : null;
+    if (!this.isCd21Entrance("INCOMING", readerUnit?.number)) {
+      return { jobId: null, message: "A conciliação na Bling só é avaliada na entrada do CD21 — o lote pode ser gerado." };
     }
 
     const blingIntegration = await getBlingIntegration();
@@ -578,9 +594,9 @@ export class ExpeditionBatchService extends BaseService<
         return;
       }
 
-      // Lote de entrada com nota Bling: todos os itens conciliados na Bling (avaliação prévia por job). Antes da trava de
+      // Entrada do CD21 com nota Bling: todos os itens conciliados na Bling (avaliação prévia por job). Antes da trava de
       // não mapeados, porque item sem código na Bling também vira não mapeado e a causa é a conciliação.
-      if (type !== "OUTGOING") {
+      if (this.isCd21Entrance(type, unitBusiness?.number)) {
         await this.assertBlingEntranceReconciled(notBatched, blingCheckJobId);
       }
 
@@ -696,17 +712,34 @@ export class ExpeditionBatchService extends BaseService<
       throw new Error("O romaneio lido não tem notas.");
     }
 
-    const [unitBusiness, invoices, incomingBatchIdByInvoiceId] = await Promise.all([
+    const [unitBusiness, sourceUnit, invoices, incomingBatchIdByInvoiceId] = await Promise.all([
       unitBusinessService.findById(unitBusinessId, {
-        attributes: ["id", "cnpj", "transshipment_allowed"],
+        attributes: ["id", "cnpj", "number", "transshipment_allowed"],
       }),
+      unitBusinessService.findById(sourceBatch.unit_business_id, { attributes: ["id", "cnpj", "number"] }),
       invoiceService.findAll({
         where: { id: invoiceIds },
-        attributes: ["id", "number_system", "sender_cnpj", "receiver_cnpj"],
+        attributes: [
+          "id",
+          "number_system",
+          "sender_cnpj",
+          "receiver_cnpj",
+          "transfer_invoice_reference",
+          "transporter_name",
+        ],
       }),
       batchInvoicesService.findBatchIdsByInvoiceIds(invoiceIds, unitBusinessId, "INCOMING"),
     ]);
-    if (!unitBusiness) throw new Error("Loja não encontrada.");
+    if (!unitBusiness || !sourceUnit) throw new Error("Loja não encontrada.");
+
+    // Romaneio do CD21 (CD 12/17 ou sem transportadora) lido por loja 12/17: lote das notas de transferência de cada venda.
+    if (isCd21TransferQrRule(sourceUnit, unitBusiness.number, invoices)) {
+      if (requestedType === "OUTGOING") {
+        throw new Error("As notas de transferência do romaneio são de entrada nesta loja. Use a tela de entrada.");
+      }
+      const transferInvoiceIds = await resolveCd21TransferInvoiceIds(invoices, unitBusiness.cnpj);
+      return this.generateBatchFromInvoices(transferInvoiceIds, unitBusinessId, "INCOMING", mode, blingCheckJobId);
+    }
 
     // Papel da loja em cada nota. Nota de outra loja em loja sem transbordo cai em transbordo-entrada e o assertTransshipment barra.
     type Note = { id: string; number: string };
@@ -811,9 +844,14 @@ async addInvoiceToBatch(
 
     const invoiceIds = invoices.map((i) => i.id);
 
-    // Lote de entrada com nota Bling: todos os itens conciliados na Bling (avaliação prévia por job). Antes da trava de
+    const unitBusiness = await unitBusinessService.findOne({
+      where: { id: unitBusinessId },
+      transaction: t,
+    });
+
+    // Entrada do CD21 com nota Bling: todos os itens conciliados na Bling (avaliação prévia por job). Antes da trava de
     // não mapeados, porque item sem código na Bling também vira não mapeado e a causa é a conciliação.
-    if (type !== "OUTGOING") {
+    if (this.isCd21Entrance(type, unitBusiness?.number)) {
       await this.assertBlingEntranceReconciled(invoices, blingCheckJobId);
     }
 
@@ -838,11 +876,6 @@ async addInvoiceToBatch(
 
     // Pedido PDV em CRITICAL_ERROR não entra em lote até o CD21 corrigir.
     await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(invoiceIds);
-
-    const unitBusiness = await unitBusinessService.findOne({
-      where: { id: unitBusinessId },
-      transaction: t,
-    });
 
     // ── Todas as notas do lote precisam ser da mesma transportadora ──
     ensureSameBy(

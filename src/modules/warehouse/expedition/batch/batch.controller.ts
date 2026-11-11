@@ -248,9 +248,13 @@ export class ExpeditionBatchController extends BaseController<
       if (Array.isArray(invoiceKey)) invoiceKeys = invoiceKey;
       else if (invoiceKey) invoiceKeys = [invoiceKey];
 
+      // Loja = body ou a do usuário logado (como no add-invoice); só a entrada do CD21 avalia.
+      const unitBusinessId = req.body?.unitBusinessId ?? (await getUserContext(req)).unitBusinessId;
+
       const result = await this.service.enqueueBlingReconciliationCheck({
         invoiceIds: Array.isArray(invoiceIds) ? invoiceIds : undefined,
         invoiceKeys,
+        unitBusinessId,
       });
       // Reprocesso da nota ainda rodando: 409 pro front avisar que espere a sincronização Bling x Hub.
       if (result.syncing) return res.status(409).json({ error: result.message, syncing: true });
