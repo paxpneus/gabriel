@@ -62,10 +62,12 @@ export class SalesReportService {
       const supplierDiscountRetro =
         await this.reapplySupplierDiscountsRetroactively();
 
-      // Snapshots mudaram: invalida o sales report e o faturado (lê os mesmos snapshots).
+      // Snapshots mudaram: invalida o sales report e os relatórios que leem os mesmos snapshots (faturado e afiliados).
       await invalidateReportCache(
         REPORT_CACHE_NAMES.salesReport,
         REPORT_CACHE_NAMES.salesInvoicedReport,
+        REPORT_CACHE_NAMES.affiliatesReport,
+        REPORT_CACHE_NAMES.affiliatedReport,
       );
 
       return {
@@ -167,6 +169,8 @@ export class SalesReportService {
     await invalidateReportCache(
       REPORT_CACHE_NAMES.salesReport,
       REPORT_CACHE_NAMES.salesInvoicedReport,
+      REPORT_CACHE_NAMES.affiliatesReport,
+      REPORT_CACHE_NAMES.affiliatedReport,
     );
   }
 

@@ -5,7 +5,7 @@ import { AffiliatedReportFilters, AffiliatedReportOrderRow } from "./affiliated-
 
 export class AffiliatedReportRepository {
   /**
-   * Pedidos do afiliado no período, na mesma base do report_rows do seller report (snapshot por item, venda válida, sem "Vendedor 0").
+   * Pedidos do afiliado no período, nos snapshots do sales report (todos os pedidos, inclusive sem vendedor), só venda válida (completed = situação válida + custo completo).
    * Só líquido = commission_base (base da comissão, já com o desconto do pedido); bruto e desconto não saem do SQL. Nada de cliente, custo ou lucro.
    */
   findOrders(filters: AffiliatedReportFilters): Promise<AffiliatedReportOrderRow[]> {
@@ -23,7 +23,7 @@ export class AffiliatedReportRepository {
         JSON_AGG(
           JSON_BUILD_OBJECT(
             'product_id', s.product_id,
-            'name', COALESCE(p.name, s.product_name, oi.name),
+            'name', COALESCE(p.name, s.description, oi.name),
             'brand', s.product_brand,
             'measure', s.product_measure,
             'quantity', s.quantity,
@@ -32,18 +32,17 @@ export class AffiliatedReportRepository {
           )
           ORDER BY s.order_item_id
         )                                     AS items
-      FROM seller_sales_order_item_snapshots s
+      FROM sales_order_item_snapshots s
+      JOIN sales_order_snapshots sos ON sos.id = s.order_snapshot_id
       JOIN orders o ON o.id = s.order_id
-      LEFT JOIN contacts sc ON sc.id = s.seller_id
       LEFT JOIN products p ON p.id = s.product_id
       LEFT JOIN order_items oi ON oi.id = s.order_item_id
       -- No máximo um cupom com afiliado por pedido (índice parcial): não duplica os itens.
       LEFT JOIN order_coupons oc ON oc.order_id = s.order_id AND oc.contact_coupon_id IS NOT NULL
       LEFT JOIN coupons cp ON cp.id = oc.coupon_id
       WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND s.is_valid_sale = TRUE
-        AND COALESCE(sc.name, '') <> 'Vendedor 0'
-        AND s.affiliated_id = :affiliatedId
+        AND sos.snapshot_status = 'completed'
+        AND sos.affiliated_id = :affiliatedId
       GROUP BY s.order_id, s.order_date, o.id, oc.order_id, oc.coupon_id, cp.id
       ORDER BY s.order_date DESC, o.number_order_channel DESC
       `,

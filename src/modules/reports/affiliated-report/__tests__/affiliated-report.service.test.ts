@@ -1,4 +1,6 @@
 import { AffiliatedReportService } from "../affiliated-report.service";
+import { AffiliatedReportRepository } from "../affiliated-report.repository";
+import sequelize from "../../../../config/sequelize";
 import { contactService } from "../../../sales/contacts";
 import contactCouponService from "../../../sales/coupons/contact-coupons/contact-coupons.service";
 import couponService from "../../../sales/coupons/coupons/coupons.service";
@@ -16,6 +18,7 @@ jest.mock("../../../sales/coupons/coupons/coupons.service", () => ({
   __esModule: true,
   default: { findAll: jest.fn() },
 }));
+jest.mock("../../../../config/sequelize", () => ({ __esModule: true, default: { query: jest.fn() } }));
 
 describe("AffiliatedReportService", () => {
   const repository = { findOrders: jest.fn() };
@@ -158,5 +161,25 @@ describe("AffiliatedReportService", () => {
 
     expect(couponService.findAll).not.toHaveBeenCalled();
     expect(report?.coupons).toEqual([]);
+  });
+});
+
+// Base = snapshots do sales report: pedido só de afiliado (sem vendedor) saiu do seller report e não pode sumir daqui.
+describe("AffiliatedReportRepository.findOrders", () => {
+  const query = sequelize.query as jest.Mock;
+
+  beforeEach(() => query.mockReset().mockResolvedValue([]));
+
+  it("lê sales_order_item_snapshots pelo afiliado do pedido, só venda válida, sem corte de vendedor", async () => {
+    await new AffiliatedReportRepository().findOrders({ affiliatedId: "aff-1", startDate: "2026-10-01", endDate: "2026-10-31" });
+
+    const [sql, options] = query.mock.calls[0];
+    expect(sql).toContain("FROM sales_order_item_snapshots s");
+    expect(sql).toContain("JOIN sales_order_snapshots sos ON sos.id = s.order_snapshot_id");
+    expect(sql).not.toContain("seller_sales_order_item_snapshots");
+    expect(sql).not.toContain("Vendedor 0");
+    expect(sql).toContain("sos.snapshot_status = 'completed'");
+    expect(sql).toContain("sos.affiliated_id = :affiliatedId");
+    expect(options.replacements).toEqual({ affiliatedId: "aff-1", startDate: "2026-10-01", endDate: "2026-10-31" });
   });
 });

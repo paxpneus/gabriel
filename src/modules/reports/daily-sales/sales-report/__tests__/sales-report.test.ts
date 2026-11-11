@@ -33,8 +33,10 @@ jest.mock("bullmq", () => ({
 import {
   calculateSalesReportAggregateFinancials,
   calculateSalesReportOrderFinancials,
+  salesReportRepository,
   SalesReportOrderInput,
 } from "../sales-report.repository";
+import sequelize from "../../../../../config/sequelize";
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
 
@@ -341,5 +343,53 @@ describe("SalesReport financial calculations (regra nova: receita/custo bruto + 
         calculateAverageTicket(totalValue, ordersFromDatabase.length),
       );
     });
+  });
+});
+
+// byAffiliated: vendas, lucro (contribution_value) e comissão por afiliado direto dos snapshots, nos dois caminhos do relatório.
+describe("SalesReportRepository.getReport byAffiliated", () => {
+  const query = sequelize.query as jest.Mock;
+  const affiliateRows = [
+    { affiliated_id: "aff-1", affiliated_name: "Afiliado A", orders_count: 2, total_value: "300.00", profit: "50.00", affiliated_comission: "15.00" },
+  ];
+  const isAffiliateQuery = (sql: string) => sql.includes("GROUP BY sos.affiliated_id");
+
+  beforeEach(() => {
+    query.mockReset().mockImplementation(async (sql: string) => (isAffiliateQuery(sql) ? affiliateRows : []));
+  });
+
+  it("via facts: devolve byAffiliated sem forçar o caminho de snapshots; storeId/state fora (mesmo recorte do general)", async () => {
+    const report = await salesReportRepository.getReport({
+      dateFrom: "2026-10-01",
+      dateTo: "2026-10-31",
+      storeId: "store-1",
+      state: "SP",
+    } as any);
+
+    const sqls = query.mock.calls.map(([sql]) => sql as string);
+    expect(sqls.some((sql) => sql.includes("FROM daily_sales_facts"))).toBe(true);
+    expect(sqls.some((sql) => sql.includes("product_filtered_rows"))).toBe(false);
+
+    const [sql, options] = query.mock.calls.find(([sql]) => isAffiliateQuery(sql))!;
+    expect(sql).toContain("SUM(sois.contribution_value), 0) AS profit");
+    expect(sql).toContain("SUM(sois.affiliated_commission_value), 0) AS affiliated_comission");
+    expect(sql).toContain("sos.snapshot_status = 'completed'");
+    expect(options.replacements).toMatchObject({ storeId: null, state: null });
+    expect(report.byAffiliated).toEqual(affiliateRows);
+  });
+
+  it("via snapshots (filtro de afiliado): mesmos filtros do relatório, com storeId/state", async () => {
+    const report = await salesReportRepository.getReport({
+      dateFrom: "2026-10-01",
+      dateTo: "2026-10-31",
+      storeId: "store-1",
+      state: "SP",
+      affiliatedIds: ["aff-1"],
+    } as any);
+
+    const [sql, options] = query.mock.calls.find(([sql]) => isAffiliateQuery(sql))!;
+    expect(sql).toContain("sos.affiliated_id = ANY(ARRAY[:affiliatedIds]::uuid[])");
+    expect(options.replacements).toMatchObject({ storeId: "store-1", state: "SP", affiliatedIds: ["aff-1"] });
+    expect(report.byAffiliated).toEqual(affiliateRows);
   });
 });

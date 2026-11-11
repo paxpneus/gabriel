@@ -289,6 +289,23 @@ const isCompletedSaleSql = (snapshotAlias: string): SqlExpression =>
   `${snapshotAlias}.snapshot_status IN ${COMPLETED_SALES_STATUSES}
             AND ${hasCompleteCostSql(snapshotAlias)}`;
 
+// Filtros do relatório nos snapshots (menos a data; aliases sois/sos/p): caminho por snapshots, desconto pela data da nota e byAffiliated.
+const SNAPSHOT_REPORT_FILTERS_SQL = `AND sos.snapshot_status = 'completed'
+      AND (COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
+           OR sois.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))
+      AND (CAST(:storeId AS uuid) IS NULL OR sos.store_id = CAST(:storeId AS uuid))
+      AND (CAST(:state AS varchar) IS NULL OR sois.destination_uf = CAST(:state AS varchar))
+      AND (cardinality(ARRAY[:productIds]::uuid[]) = 0
+           OR sois.product_id = ANY(ARRAY[:productIds]::uuid[]))
+      AND (cardinality(ARRAY[:brandIds]::uuid[]) = 0
+           OR p.brand_id = ANY(ARRAY[:brandIds]::uuid[]))
+      AND (CAST(:tireMeasure AS varchar) IS NULL
+           OR UPPER(TRIM(sois.product_measure)) = UPPER(TRIM(CAST(:tireMeasure AS varchar))))
+      AND (cardinality(ARRAY[:orderIds]::uuid[]) = 0
+           OR sois.order_id = ANY(ARRAY[:orderIds]::uuid[]))
+      AND (cardinality(ARRAY[:affiliatedIds]::uuid[]) = 0
+           OR sos.affiliated_id = ANY(ARRAY[:affiliatedIds]::uuid[]))`;
+
 const toNumber = (value: number | string | null | undefined): number =>
   value == null ? 0 : Number(value);
 
@@ -1963,8 +1980,15 @@ FROM item_calc
 
     // Desconto de fornecedor do período pela emissão da nota (mesma data da vigência da regra), não pelo pedido:
     // só exibição, o total_supplier_discount (pelo order_date) continua sendo o que bate com a contribuição.
-    // Via facts o general só filtra loja, então storeId/state ficam fora pra manter o mesmo recorte.
-    const [invoiceDateDiscount] = await sequelize.query<{ total: string }>(
+    // Via facts o general só filtra loja: storeId/state só valem quando o relatório já vai pelos snapshots.
+    const snapshotOnlyReplacements = {
+      ...replacements,
+      storeId: hasProductFilter ? replacements.storeId : null,
+      state: hasProductFilter ? replacements.state : null,
+    };
+
+    const [[invoiceDateDiscount], byAffiliated] = await Promise.all([
+      sequelize.query<{ total: string }>(
       `
     SELECT COALESCE(SUM(sois.supplier_discount_value), 0) AS total
     FROM sales_order_item_snapshots sois
@@ -1974,31 +1998,34 @@ FROM item_calc
     WHERE sois.supplier_discount_value <> 0
       AND (${supplierDiscountReferenceDateSql("sois")} AT TIME ZONE 'America/Sao_Paulo')::date
           BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-      AND sos.snapshot_status = 'completed'
-      AND (COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
-           OR sois.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))
-      AND (CAST(:storeId AS uuid) IS NULL OR sos.store_id = CAST(:storeId AS uuid))
-      AND (CAST(:state AS varchar) IS NULL OR sois.destination_uf = CAST(:state AS varchar))
-      AND (cardinality(ARRAY[:productIds]::uuid[]) = 0
-           OR sois.product_id = ANY(ARRAY[:productIds]::uuid[]))
-      AND (cardinality(ARRAY[:brandIds]::uuid[]) = 0
-           OR p.brand_id = ANY(ARRAY[:brandIds]::uuid[]))
-      AND (CAST(:tireMeasure AS varchar) IS NULL
-           OR UPPER(TRIM(sois.product_measure)) = UPPER(TRIM(CAST(:tireMeasure AS varchar))))
-      AND (cardinality(ARRAY[:orderIds]::uuid[]) = 0
-           OR sois.order_id = ANY(ARRAY[:orderIds]::uuid[]))
-      AND (cardinality(ARRAY[:affiliatedIds]::uuid[]) = 0
-           OR sos.affiliated_id = ANY(ARRAY[:affiliatedIds]::uuid[]))
+      ${SNAPSHOT_REPORT_FILTERS_SQL}
     `,
-      {
-        type: QueryTypes.SELECT,
-        replacements: {
-          ...replacements,
-          storeId: hasProductFilter ? replacements.storeId : null,
-          state: hasProductFilter ? replacements.state : null,
-        },
-      },
-    );
+      { type: QueryTypes.SELECT, replacements: snapshotOnlyReplacements },
+      ),
+      // Vendas por afiliado direto dos snapshots (facts não têm afiliado), sem forçar o relatório inteiro pelos snapshots.
+      // Lucro = contribution_value (mesmo do relatório de afiliados); comissão só de pedido faturado (regra do snapshot).
+      sequelize.query<ReportRow>(
+      `
+    SELECT
+      sos.affiliated_id,
+      MAX(ct.name) AS affiliated_name,
+      COUNT(DISTINCT sois.order_id)::integer AS orders_count,
+      COALESCE(SUM(sois.net_total), 0) AS total_value,
+      COALESCE(SUM(sois.contribution_value), 0) AS profit,
+      COALESCE(SUM(sois.affiliated_commission_value), 0) AS affiliated_comission
+    FROM sales_order_item_snapshots sois
+    JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
+    LEFT JOIN products p ON p.id = sois.product_id
+    LEFT JOIN contacts ct ON ct.id = sos.affiliated_id
+    WHERE sos.affiliated_id IS NOT NULL
+      AND sois.order_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+      ${SNAPSHOT_REPORT_FILTERS_SQL}
+    GROUP BY sos.affiliated_id
+    ORDER BY total_value DESC
+    `,
+      { type: QueryTypes.SELECT, replacements: snapshotOnlyReplacements },
+      ),
+    ]);
 
     return {
       ...report,
@@ -2006,6 +2033,7 @@ FROM item_calc
         ...report.general,
         total_supplier_discount_by_invoice_date: invoiceDateDiscount?.total ?? 0,
       },
+      byAffiliated,
     };
   }
 
@@ -2134,21 +2162,7 @@ FROM item_calc
     JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
     LEFT JOIN products p ON p.id = sois.product_id
     WHERE sois.order_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-      AND sos.snapshot_status = 'completed'
-      AND (COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
-           OR sois.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))
-      AND (CAST(:storeId AS uuid) IS NULL OR sos.store_id = CAST(:storeId AS uuid))
-      AND (CAST(:state AS varchar) IS NULL OR sois.destination_uf = CAST(:state AS varchar))
-      AND (cardinality(ARRAY[:productIds]::uuid[]) = 0
-           OR sois.product_id = ANY(ARRAY[:productIds]::uuid[]))
-      AND (cardinality(ARRAY[:brandIds]::uuid[]) = 0
-           OR p.brand_id = ANY(ARRAY[:brandIds]::uuid[]))
-      AND (CAST(:tireMeasure AS varchar) IS NULL
-           OR UPPER(TRIM(sois.product_measure)) = UPPER(TRIM(CAST(:tireMeasure AS varchar))))
-      AND (cardinality(ARRAY[:orderIds]::uuid[]) = 0
-           OR sois.order_id = ANY(ARRAY[:orderIds]::uuid[]))
-      AND (cardinality(ARRAY[:affiliatedIds]::uuid[]) = 0
-           OR sos.affiliated_id = ANY(ARRAY[:affiliatedIds]::uuid[]))
+      ${SNAPSHOT_REPORT_FILTERS_SQL}
   )
 `;
 

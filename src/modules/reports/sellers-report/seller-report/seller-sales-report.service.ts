@@ -82,7 +82,6 @@ export class SellerSalesReportService {
       await invalidateReportCache(
         REPORT_CACHE_NAMES.sellerSalesReport,
         REPORT_CACHE_NAMES.sellerCommissionReport,
-        REPORT_CACHE_NAMES.affiliatedReport,
       );
 
       return {

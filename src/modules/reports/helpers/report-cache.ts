@@ -7,6 +7,7 @@ export const REPORT_CACHE_TTL_SECONDS = 60 * 60;
 // Prefixo de cache de cada relatório (usado no cache e na invalidação pelos jobs).
 export const REPORT_CACHE_NAMES = {
   affiliatedReport: "affiliated-report",
+  affiliatesReport: "affiliates-report",
   dailyOperationReport: "daily-operation-report",
   salesReport: "sales-report",
   integrationProblemsReport: "integration-problems-report",

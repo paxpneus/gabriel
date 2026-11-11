@@ -190,6 +190,11 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
             id: "daily-operation-report",
             label: "Relatório de Operação",
           },
+          // Só o menu; a rota exige a permissão "Relatório de Afiliados" no role (gerente/vendedor não ganham o nó).
+          {
+            id: "affiliates-report",
+            label: "Relatório de Afiliados",
+          },
         ],
       },
 

@@ -100,7 +100,7 @@ function rankingProduct(product: AffiliatedReportProduct | null | undefined): Af
   return { product_id, product_name, product_brand, product_measure, quantity, commission_value };
 }
 
-// Relatório do próprio afiliado logado (login de afiliado), na base do seller report.
+// Relatório do próprio afiliado logado (login de afiliado), nos snapshots do sales report.
 export class AffiliatedReportService {
   constructor(private readonly repository: AffiliatedReportRepository = affiliatedReportRepository) {}
 

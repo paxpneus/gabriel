@@ -32,7 +32,12 @@ jest.mock("../../../helpers/report-cache", () => ({
   __esModule: true,
   cachedReport: jest.fn(),
   invalidateReportCache: jest.fn(),
-  REPORT_CACHE_NAMES: { salesReport: "sales-report", salesInvoicedReport: "sales-invoiced-report" },
+  REPORT_CACHE_NAMES: {
+    salesReport: "sales-report",
+    salesInvoicedReport: "sales-invoiced-report",
+    affiliatesReport: "affiliates-report",
+    affiliatedReport: "affiliated-report",
+  },
 }));
 
 import { salesReportRepository } from "../sales-report.repository";
@@ -93,7 +98,12 @@ describe("SalesReportService.runIncrementalJob", () => {
     ]);
     expect(repo.markSuccess).toHaveBeenCalledWith(expect.any(Date), 1200);
     expect(result.ordersProcessed).toBe(1200);
-    // Snapshots mudaram: cache do sales report e do faturado é invalidado no fim do job.
-    expect(invalidateReportCache).toHaveBeenCalledWith("sales-report", "sales-invoiced-report");
+    // Snapshots mudaram: cache do sales report, do faturado e dos dois relatórios de afiliado (mesmos snapshots) é invalidado no fim do job.
+    expect(invalidateReportCache).toHaveBeenCalledWith(
+      "sales-report",
+      "sales-invoiced-report",
+      "affiliates-report",
+      "affiliated-report",
+    );
   });
 });

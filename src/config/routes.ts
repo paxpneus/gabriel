@@ -1,7 +1,7 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
-import { INVOICE_PRODUCT_MAPPING_ENTITY, PHYSICAL_EAN_OWNER_ENTITY, REPORT_REFRESH_ENTITY } from "../shared/constants/roles";
+import { AFFILIATES_REPORT_ENTITY, INVOICE_PRODUCT_MAPPING_ENTITY, PHYSICAL_EAN_OWNER_ENTITY, REPORT_REFRESH_ENTITY } from "../shared/constants/roles";
 
 const router = Router();
 const modulesPath = path.resolve(__dirname, "..", "modules");
@@ -79,6 +79,7 @@ const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "sales-return-report/refresh": REPORT_REFRESH_ENTITY,
   "sale-transfer-invoice-report/refresh": REPORT_REFRESH_ENTITY,
   "seller-commission-report/refresh": REPORT_REFRESH_ENTITY,
+  "affiliates-report/refresh": REPORT_REFRESH_ENTITY,
   "sales-report/run": REPORT_REFRESH_ENTITY,
   "seller-report/run": REPORT_REFRESH_ENTITY,
   "daily-operation-report/run": REPORT_REFRESH_ENTITY,
@@ -90,6 +91,8 @@ const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "seller-commission-report": "financial-pdt",
   "integration-problems-report": "financial-pdt",
   "sale-transfer-invoice-report": "invoices",
+  // Relatório de afiliados do hub (sem .model.ts); não casa com "affiliated-report" (do próprio afiliado, sem permissão).
+  "affiliates-report": AFFILIATES_REPORT_ENTITY,
   // Rotas sem model (resolveriam null = liberadas pra qualquer logado): mapeadas pra permissão existente.
   "/api/bling-api-fetch": "integrations",
   "/api/tecinco/sync": "integrations",

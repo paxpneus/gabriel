@@ -411,8 +411,7 @@ export class SellerSalesReportRepository {
         order_source AS (
         SELECT
           o.id                        AS order_id,
-          -- Pedido de marketplace só entra pelo afiliado; nesse caso não há vendedor.
-          CASE WHEN COALESCE(sc.name, '') = 'Vendedor 0' THEN NULL ELSE o.seller_id END AS seller_id,
+          o.seller_id,
           oa.contact_id               AS affiliated_id,
           COALESCE(oa.commission_amount, 0) AS order_affiliated_commission,
           o.customer_id,
@@ -442,10 +441,9 @@ LEFT JOIN states st ON st.acronym = o.destination_uf
 LEFT JOIN contacts sc ON sc.id = o.seller_id
 LEFT JOIN unit_businesses ub ON ub.id = o.unit_business_id
 ${orderAffiliateJoinSql("o", "oa")}
--- Entra pedido com vendedor real OU com afiliado (cupom com dono na época).
+-- Só pedido com vendedor real; pedido só de afiliado fica no relatório de afiliados (snapshots do sales report).
 -- Pedido "Sem Loja" (loja 0) com vendedor entra: é venda real do vendedor, só sem loja no cadastro.
-WHERE (o.seller_id IS NOT NULL AND COALESCE(sc.name, '') <> 'Vendedor 0')
-   OR oa.contact_id IS NOT NULL
+WHERE o.seller_id IS NOT NULL AND COALESCE(sc.name, '') <> 'Vendedor 0'
 
       ),
 
@@ -1365,52 +1363,9 @@ async getReport(filters: SellerSalesReportFilters) {
         COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount
       FROM report_rows s
       LEFT JOIN contacts ct ON ct.id = s.seller_id
-      -- Pedido só de afiliado (marketplace com cupom) não tem vendedor; aparece em byAffiliated.
       WHERE s.seller_id IS NOT NULL
       GROUP BY s.seller_id
       ORDER BY total_sold DESC
-      `,
-      {
-        type: QueryTypes.SELECT,
-        replacements: baseFilterReplacements,
-      },
-    );
-
-    // -------------------------------------------------------------
-    // Vendas por Afiliado (cupons com dono gravados em order_coupons)
-    // -------------------------------------------------------------
-    const byAffiliated = await sequelize.query(
-      `
-      WITH ${reportRowsCte},
-      affiliated_rows AS (
-        SELECT
-          s.affiliated_id,
-          COUNT(DISTINCT s.order_id) AS sales_count,
-          COALESCE(SUM(s.net_total), 0) AS total_sold,
-          COALESCE(SUM(s.commission_base), 0) AS commission_base,
-          COALESCE(SUM(s.affiliated_commission_value), 0) AS affiliated_comission,
-          ARRAY_AGG(DISTINCT s.order_id) AS order_ids
-        FROM report_rows s
-        WHERE s.affiliated_id IS NOT NULL
-        GROUP BY s.affiliated_id
-      )
-      SELECT
-        ar.affiliated_id,
-        ct.name AS affiliated_name,
-        (
-          SELECT STRING_AGG(DISTINCT cp.code, ', ')
-          FROM order_coupons oc
-          JOIN coupons cp ON cp.id = oc.coupon_id
-          WHERE oc.order_id = ANY(ar.order_ids)
-            AND oc.contact_coupon_id IS NOT NULL
-        ) AS coupon_codes,
-        ar.sales_count,
-        ar.total_sold,
-        ar.commission_base,
-        ar.affiliated_comission
-      FROM affiliated_rows ar
-      LEFT JOIN contacts ct ON ct.id = ar.affiliated_id
-      ORDER BY ar.total_sold DESC
       `,
       {
         type: QueryTypes.SELECT,
@@ -1595,7 +1550,6 @@ async getReport(filters: SellerSalesReportFilters) {
       byManager,
       managerCommissionByBrand,
       bySeller,
-      byAffiliated,
       customers,
       evolution: {
         daily: evolutionDaily,
