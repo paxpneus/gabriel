@@ -1,6 +1,6 @@
 import { FindAttributeOptions, Sequelize } from "sequelize";
 import sequelize from "../../../../../config/sequelize";
-import { totalExpectedLiteral } from "../../../../warehouse/fiscal/invoices/invoice/helpers/totals";
+import { totalExpectedLiteral } from "../../../../warehouse/fiscal/invoices/invoice";
 
 export const SALE_INVOICE_ALIAS = "Invoice";
 

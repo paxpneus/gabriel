@@ -13,7 +13,7 @@ import {
   paginateBling,
 } from "../bling-sync/helpers/bling-list";
 import { BULK_FORCE_UPDATE_PRIORITY } from "../bling-orders/bling-order.queue";
-import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../../../warehouse/fiscal/invoices/invoice";
 import ordersService from "../../../../sales/orders/order/orders.service";
 import { FINAL_ORDER_SITUATIONS } from "../../../../sales/orders/order/helpers/invoiced";
 

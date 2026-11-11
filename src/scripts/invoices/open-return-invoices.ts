@@ -11,10 +11,9 @@ import { Op } from "sequelize";
 import sequelize from "../../config/sequelize";
 import { setupAssociations } from "../../config/sequelize-associations";
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
-import invoiceService from "../../modules/warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceLifecycleService, isStoredXmlReturnInvoice } from "../../modules/warehouse/fiscal/invoices/invoice";
 import InvoiceUnitBusinessAttributes from "../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import { InvoiceUnitBusinessAttributesStatus } from "../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
-import { isStoredXmlReturnInvoice } from "../../modules/warehouse/fiscal/invoices/invoice/helpers/return-invoice";
 
 const DRY_RUN = process.env.DRY_RUN === "true";
 const PAGE_SIZE = 500;
@@ -74,7 +73,7 @@ async function main() {
       console.log(`  ${DRY_RUN ? "[DRY_RUN] " : ""}NF ${invoice.number_system} (${invoice.id}) → OPEN`);
     }
     if (!DRY_RUN) {
-      await invoiceService.updateInvoicesForAllUnitBusiness(
+      await invoiceLifecycleService.updateInvoicesForAllUnitBusiness(
         returnInvoices.map((invoice) => invoice.id),
         { status: "OPEN" },
         { type: "INCOMING", status: { [Op.in]: SCHEDULING_STATUSES } },

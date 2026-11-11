@@ -1,5 +1,4 @@
-import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
-import { extractTransferReferenceNumber } from "../../../fiscal/invoices/invoice/helpers/transfer-reference";
+import { transferReferenceService, extractTransferReferenceNumber } from "../../../fiscal/invoices/invoice";
 import { CD21_UNIT_BUSINESS_NUMBER } from "../../../../company/unit-business/helpers/cd21-unit-business-number";
 import {
   ADT_TRANSPORTER_CDS,
@@ -50,7 +49,7 @@ export async function resolveCd21TransferInvoiceIds(
   }
 
   const numbers = [...new Set(referenced.map((ref) => ref.transferNumber as string))];
-  const transfers = await invoiceService.findTransfersToReceiverByNumbers(numbers, readerCnpj);
+  const transfers = await transferReferenceService.findTransfersToReceiverByNumbers(numbers, readerCnpj);
   const foundNumbers = new Set(transfers.map((transfer) => transfer.normalized_number));
   const notFound = referenced.filter((ref) => !foundNumbers.has(ref.transferNumber as string));
   if (notFound.length) {

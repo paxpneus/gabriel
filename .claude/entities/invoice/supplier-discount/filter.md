@@ -1,6 +1,6 @@
 # `rim`/`supplier_discount` invoice filters
 
-Both in `invoice/helpers/custom-filters.ts`, wired into `InvoiceService.queryConfig.customFields`/`listInvoices`.
+Both in `invoice/shared/helpers/custom-filters.ts`, wired into `invoiceQueryConfig.customFields`/`listInvoices`.
 
 - `productRimWhere(rimIds: string[])` — `rim` filter: notas com algum item cujo `Product.rim_id` está no array informado (OR entre os aros). Plain `EXISTS` over `invoice_items`/`products`, no KIT-component resolution (mirrors the pre-existing `brand` customField's directness, not the discount engine below).
 - `productBrandWhere(brandIds: string[])` — `brand_id` filter: mesmo formato do `rim`, por `Product.brand_id` (entidade `Brand`). Coexiste com o customField legado `brand` (inline no service), que compara o texto `products.brand`.

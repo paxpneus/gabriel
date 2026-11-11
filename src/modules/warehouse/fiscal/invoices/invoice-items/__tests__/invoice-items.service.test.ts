@@ -28,12 +28,10 @@ jest.mock(
   }),
 );
 
-jest.mock("../../invoice/invoice.service", () => ({
+jest.mock("../../invoice", () => ({
   __esModule: true,
-  default: {
-    findByIdFullForAllUnits: jest.fn(),
-    updateInvoicesForAllUnitBusiness: jest.fn(),
-  },
+  invoiceService: { findByIdFullForAllUnits: jest.fn() },
+  invoiceLifecycleService: { updateInvoicesForAllUnitBusiness: jest.fn() },
 }));
 
 jest.mock("../../../../../inventory/supplier-mapping/supplier-mapping.service", () => ({
@@ -73,7 +71,7 @@ import InvoiceItems from "../invoice-items.model";
 import InvoiceFiscalItem from "../../invoice-fiscal-item/invoice-fiscal-item.model";
 import Product from "../../../../../inventory/products/product.model";
 import unmappedInvoiceProductService from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
-import invoiceService from "../../invoice/invoice.service";
+import { invoiceLifecycleService, invoiceService } from "../../invoice";
 import pdvSalesRequestService from "../../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { InvoiceItemsService } from "../invoice-items.service";
 
@@ -111,7 +109,7 @@ describe("InvoiceItemsService.createInvoiceItemForUnmappedProducts (cascata de a
       id: "product-1",
       productConfigs: [],
     });
-    (invoiceService.updateInvoicesForAllUnitBusiness as jest.Mock).mockResolvedValue(
+    (invoiceLifecycleService.updateInvoicesForAllUnitBusiness as jest.Mock).mockResolvedValue(
       undefined,
     );
     (unmappedInvoiceProductService.delete as jest.Mock).mockResolvedValue(undefined);

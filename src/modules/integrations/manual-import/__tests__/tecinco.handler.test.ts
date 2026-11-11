@@ -25,9 +25,9 @@ jest.mock("../../../company/unit-business/unit-business.service", () => ({
   __esModule: true,
   default: { findOne: jest.fn() },
 }));
-jest.mock("../../../warehouse/fiscal/invoices/invoice/invoice.service", () => ({
+jest.mock("../../../warehouse/fiscal/invoices/invoice", () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), findOne: jest.fn() },
+  invoiceService: { findAll: jest.fn(), findOne: jest.fn() },
 }));
 jest.mock("../helpers/product-mapping", () => ({
   __esModule: true,

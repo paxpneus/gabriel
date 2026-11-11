@@ -1,6 +1,6 @@
 import { Op, Transaction, WhereOptions } from "sequelize";
 import { cleanDocument } from "../../../../../shared/utils/normalizers/document";
-import invoiceRepository from "../../../fiscal/invoices/invoice/invoice.repository";
+import invoiceUnitBusinessAttributesRepository from "../../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.repository";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 
 export type BatchType = "INCOMING" | "OUTGOING";
@@ -85,7 +85,7 @@ export async function assertTransshipment(
 
   // Transbordo: expedição só depois da entrada da nota finalizada nesta loja.
   if (isTransshipment && type === "OUTGOING") {
-    const incoming = await invoiceRepository.findInvoiceAttribute(
+    const incoming = await invoiceUnitBusinessAttributesRepository.findInvoiceAttribute(
       invoice.id,
       unitBusinessId,
       "INCOMING",
@@ -99,7 +99,7 @@ export async function assertTransshipment(
   }
 
   // Emissora/destinatária: vale a linha da ingestão, de qualquer type; transbordo: uma linha por type de lote.
-  const existing = await invoiceRepository.findInvoiceAttribute(
+  const existing = await invoiceUnitBusinessAttributesRepository.findInvoiceAttribute(
     invoice.id,
     unitBusinessId,
     isTransshipment ? type : undefined,
@@ -107,7 +107,7 @@ export async function assertTransshipment(
   );
   if (existing) return isTransshipment;
 
-  await invoiceRepository.createInvoiceAttributes(
+  await invoiceUnitBusinessAttributesRepository.createInvoiceAttributes(
     [
       {
         invoice_id: invoice.id,

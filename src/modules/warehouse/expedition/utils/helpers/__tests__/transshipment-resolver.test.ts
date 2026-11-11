@@ -1,6 +1,6 @@
 import { Op } from "sequelize";
 
-jest.mock("../../../../fiscal/invoices/invoice/invoice.repository", () => ({
+jest.mock("../../../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.repository", () => ({
   __esModule: true,
   default: { findInvoiceAttribute: jest.fn(), createInvoiceAttributes: jest.fn() },
 }));
@@ -10,7 +10,7 @@ jest.mock("../../../../../company/unit-business/unit-business.service", () => ({
   default: { findOne: jest.fn() },
 }));
 
-import invoiceRepository from "../../../../fiscal/invoices/invoice/invoice.repository";
+import invoiceUnitBusinessAttributesRepository from "../../../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.repository";
 import {
   assertTransshipment,
   batchAttributeWhere,
@@ -18,7 +18,7 @@ import {
   pickBatchAttribute,
 } from "../transshipment-resolver";
 
-const repo = invoiceRepository as unknown as {
+const repo = invoiceUnitBusinessAttributesRepository as unknown as {
   findInvoiceAttribute: jest.Mock;
   createInvoiceAttributes: jest.Mock;
 };

@@ -239,14 +239,6 @@ export type InvoiceWithTransporter = Invoice & {
   transporter: Transporter;
 };
 
-// Uma linha de countPendingBatchByTransporter (notas PENDING/OPEN sem
-// romaneio gerado, agrupadas por transportadora).
-export interface PendingBatchByTransporterRow {
-  transporter_id: string | null;
-  transporter_name: string | null;
-  quantity: number;
-}
-
 export type SefazManifestationStatus =
   | "PENDING_CIENCIA"
   | "CIENCIA_ENVIADA"
@@ -256,13 +248,3 @@ export type SefazManifestationStatus =
   | "OPERACAO_NAO_REALIZADA"
   | "AGUARDANDO_PROCNFE"
   | "PROCNFE_DESISTIDO";
-
-
-// Nota alvo de cancelamento direto (cancelInvoice/bondReturnInvoice): status por unit business + vínculos em lote aberto.
-export interface InvoiceCancellationTarget {
-  id: string;
-  number_system: string;
-  return_invoice_reference: string | null;
-  statuses: InvoiceStatus[];
-  openBatchInvoiceIds: string[];
-}

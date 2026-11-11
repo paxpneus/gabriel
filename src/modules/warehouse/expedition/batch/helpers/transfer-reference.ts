@@ -1,4 +1,4 @@
-import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
+import { transferReferenceService } from "../../../fiscal/invoices/invoice";
 import {
   ADT_TRANSPORTER_CDS,
   extractTransporterCd,
@@ -19,7 +19,7 @@ export async function assertAdtBatchTransferReferences(batch: ExpeditionBatchFul
   const needingTransfer = batchInvoices.filter((bi) => !bi.invoice.correction_letter_path);
   if (!needingTransfer.length) return;
 
-  await invoiceService.assertTransferReferences(
+  await transferReferenceService.assertTransferReferences(
     needingTransfer.map((bi) => ({
       invoiceId: bi.invoice_id,
       invoiceNumber: bi.invoice.number_system,

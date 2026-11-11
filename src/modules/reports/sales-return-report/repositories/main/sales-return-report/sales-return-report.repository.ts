@@ -6,7 +6,7 @@ import {
   movementInvoiceIdsSql,
   unitBusinessPeriodWhere,
 } from "../../../../../../shared/query/query-objects/stock-movements/stock-movement.filters";
-import { XML_HEAD_LENGTH } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/nfe-ide";
+import { XML_HEAD_LENGTH } from "../../../../../warehouse/fiscal/invoices/invoice";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import {
   ReturnInvoiceCandidateRow,

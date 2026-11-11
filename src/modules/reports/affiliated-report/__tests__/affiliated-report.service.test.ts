@@ -1,3 +1,11 @@
+// Fachada da invoice carrega todos os services (Redis/BullMQ); aqui só os helpers SQL puros são usados, reais.
+jest.mock("../../../warehouse/fiscal/invoices/invoice", () => ({
+  __esModule: true,
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/totals"),
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/custom-filters"),
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/nfe-ide"),
+}));
+
 import { AffiliatedReportService } from "../affiliated-report.service";
 import { AffiliatedReportRepository } from "../affiliated-report.repository";
 import sequelize from "../../../../config/sequelize";

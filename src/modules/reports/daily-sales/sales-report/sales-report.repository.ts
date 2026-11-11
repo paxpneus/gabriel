@@ -8,7 +8,7 @@ import {
 import { orderInvoicedSql } from "../../../sales/orders/order/helpers/invoiced";
 import { itemNetValueSql, orderNetValueSql } from "./helpers/net-value";
 import { orderAffiliateJoinSql } from "../../../sales/coupons/order-coupons/helpers/affiliated-commission-sql";
-import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
+import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice";
 import {
   chunkArray,
   FACT_KEYS_PER_STATEMENT,

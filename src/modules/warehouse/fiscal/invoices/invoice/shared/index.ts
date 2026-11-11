@@ -1,0 +1,19 @@
+// Fachada do shared de invoice: o que 2+ domínios usam (list-query/request/batch-invoice-scope só pros domínios; a fachada da entidade não reexporta).
+export { invoiceQueryConfig } from "./helpers/invoice.query-config";
+export * from "./helpers/list-query";
+export * from "./helpers/request";
+export * from "./helpers/batch-invoice-scope";
+export * from "./helpers/totals";
+export * from "./helpers/custom-filters";
+export * from "./helpers/nfe-ide";
+export * from "./helpers/invoice-direction";
+export * from "./helpers/delivery-note";
+export * from "./helpers/reference-description";
+export * from "./helpers/transfer-reference";
+export * from "./helpers/bling-entrance-url";
+export { default as transferReferenceService, TransferReferenceService } from "./services/transfer-reference.service";
+export { default as invoiceCreationService, InvoiceCreationService } from "./services/invoice-creation.service";
+export { default as invoiceAttributesRepository, InvoiceAttributesRepository } from "./repositories/invoice-attributes.repository";
+export { default as transferReferenceRepository, TransferReferenceRepository } from "./repositories/transfer-reference.repository";
+export { default as invoiceCreationRepository, InvoiceCreationRepository } from "./repositories/invoice-creation.repository";
+export { default as invoiceXmlRepository, InvoiceXmlRepository } from "./repositories/invoice-xml.repository";

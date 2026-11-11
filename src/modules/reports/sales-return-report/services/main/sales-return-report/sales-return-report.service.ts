@@ -11,7 +11,7 @@ import productService from "../../../../../inventory/products/services/product.s
 import {
   NFE_RETURN_PURPOSE,
   readNfeIde,
-} from "../../../../../warehouse/fiscal/invoices/invoice/helpers/nfe-ide";
+} from "../../../../../warehouse/fiscal/invoices/invoice";
 import {
   SalesReturnData,
   SalesReturnReport,

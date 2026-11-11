@@ -3,7 +3,7 @@ import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import { Product, ProductConfig } from "../../../inventory";
 import Invoice from "../../fiscal/invoices/invoice/invoice.model";
-import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
+import { invoiceService, labelService, LabelVolume } from "../../fiscal/invoices/invoice";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import batchItemsService, {
@@ -32,9 +32,6 @@ import InvoiceUnitBusinessAttributes from "../../fiscal/invoices/invoice-unit-bu
 import roleService from "../../../company/users/roles/role.service";
 import { pendingQuantityWhere } from "../batch-invoice-items/helpers/pending-filter";
 import { PendingVolume } from "./scan-logs.types";
-import labelService, {
-  LabelVolume,
-} from "../../fiscal/invoices/invoice/invoice-label.service";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
@@ -904,7 +901,7 @@ export class ExpeditionScanLogService extends BaseService<
   /**
    * Volumes ainda não bipados de um produto do lote, por nota fiscal.
    * O vol_number real (últimos 6 dígitos do código de barras da etiqueta,
-   * ver invoice-label.service.ts's buildVolNumber) é volumeAtual+volumeTotal
+   * ver invoice/labels/services/labels.service.ts's buildVolNumber) é volumeAtual+volumeTotal
    * DA NOTA INTEIRA, não um sequencial por produto — por isso os volumes
    * esperados são reconstruídos a partir da própria etiqueta da nota
    * (labelService.getInvoiceVolumes), filtrados pelo product_id do item.

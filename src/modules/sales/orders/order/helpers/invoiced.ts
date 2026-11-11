@@ -1,5 +1,5 @@
 import { BLING_STATUS_DEFAULTS } from "../../integration-order-status-mapping/integration-order-status-mapping.service";
-import { invoiceCancelledSql } from "../../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
+import { invoiceCancelledSql } from "../../../../warehouse/fiscal/invoices/invoice";
 
 // Situação final e não cancelada no Bling (Atendido, Enviado, Entregue), pelo `orders.actual_situation`.
 export const FINAL_ORDER_SITUATIONS = BLING_STATUS_DEFAULTS.filter(

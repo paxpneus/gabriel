@@ -12,7 +12,7 @@ import {
   supplierDiscountReferenceDateJoinSql,
   supplierDiscountReferenceDateSql,
 } from "../../../inventory/supplier-discount-rules/helpers/reference-date";
-import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
+import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice";
 import { SELLER_CONTACT_TYPES } from "../../../sales/contacts/contacts.types";
 import {
   regionalManagersFromSql,

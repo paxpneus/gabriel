@@ -2,7 +2,7 @@ import { Op, Transaction } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import invoiceItemsService from "../../fiscal/invoices/invoice-items/invoice-items.service";
-import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../fiscal/invoices/invoice";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import ExpeditionBatch from "../batch/batch.model";
 import scanLogsService from "../scan-logs/scan-logs.service";

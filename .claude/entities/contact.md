@@ -26,7 +26,7 @@ Vendedores do Bling e afiliados (clientes ficam em `customers`, não aqui apesar
 
 - `CONTACT_USER_TYPE_CONFIG` (`sellers.service.ts`): `AFFILIATED` → user type `affiliated`, role "Afiliado" (seed m349), loja fixa `CD21_UNIT_BUSINESS_NUMBER` (ignora `unit_business_id`); `SELLER` → `seller`, role "Vendedor", exige `unit_business_id`. Outro tipo (inclui `SELLER_MANAGER`/`CUSTOMER`) → "Tipo de contato ... não permite criar usuário".
 - Uma transação: role → loja → `userService.createUserWithValidation(dto, t)` → Contact sem `id_system`/`custom_data`. Resposta `{ contact, user }` sem senha. `UniqueConstraintError` em `user_id`/`document` vira mensagem amigável.
-- `createUserFromSellerName` (usa `id_system` como CPF) lança "Vendedor ... sem id_system cadastrado" se vier null; `invoice.service.ts` devolve `seller.id_system ?? ""`.
+- `createUserFromSellerName` (usa `id_system` como CPF) lança "Vendedor ... sem id_system cadastrado" se vier null; `invoice/reports/services/reports.service.ts` devolve `seller.id_system ?? ""`.
 - Index: sem `filterableFields` (todo campo filtra) → `filters[type]=AFFILIATED` lista afiliados.
 
 ## `PUT /api/contacts/:id/with-user` (edita User + Contact)

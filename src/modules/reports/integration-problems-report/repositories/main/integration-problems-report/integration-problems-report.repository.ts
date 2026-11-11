@@ -6,7 +6,7 @@ import {
   outputMovementsWhere,
   unitBusinessPeriodWhere,
 } from "../../../../../../shared/query/query-objects/stock-movements/stock-movement.filters";
-import { invoiceCancelledSql } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
+import { invoiceCancelledSql } from "../../../../../warehouse/fiscal/invoices/invoice";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import {
   SaleInvoiceWithoutMovementRow,

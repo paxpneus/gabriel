@@ -45,9 +45,7 @@ import {
   rethrowWithLog,
 } from "../../../../../../shared/utils/logging/db-errors-logs";
 import { MagentoSyncQueue } from "../../../../magentoV2/queues/magento-sync.queue";
-import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
-import { buildInvoiceTrackingUrl } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/tracking-url";
-import { isReturnInvoicePurpose } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/return-invoice";
+import { invoiceCancellationService, invoiceCreationService, invoiceLifecycleService, invoiceService, buildInvoiceTrackingUrl, isReturnInvoicePurpose } from "../../../../../warehouse/fiscal/invoices/invoice";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import invoiceItemsService from "../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import {
@@ -2045,7 +2043,7 @@ export class BlingApiFetchQueue extends BaseQueueService<
     let invoice: FullInvoiceForAllUnits | null;
 
     if (!existingInvoice) {
-      const created = await invoiceService
+      const created = await invoiceCreationService
         .createWithRelations(invoiceBaseData, invoiceItemsForCreate, {
           initialStatus: resolveInitialStatus(),
           invoiceType,
@@ -2061,7 +2059,7 @@ export class BlingApiFetchQueue extends BaseQueueService<
 
       invoice = await invoiceService.findByIdFullForAllUnits(created.id);
     } else {
-      await invoiceService.updateInvoicesForAllUnitBusiness(
+      await invoiceLifecycleService.updateInvoicesForAllUnitBusiness(
         [existingInvoice.id],
         invoiceBaseData,
       );
@@ -2069,9 +2067,9 @@ export class BlingApiFetchQueue extends BaseQueueService<
       // Backfill — só tem efeito quando a linha nunca passou por
       // createWithRelations (nota "provisória" vinculada rápido pelo pedido
       // — ver bling-order.service.ts::resolveInvoiceId e
-      // invoiceService.ensureUnitBusinessAttributes); em qualquer outra
+      // invoiceCreationService.ensureUnitBusinessAttributes); em qualquer outra
       // invoice (o caso normal, já criada com attributes) é um no-op.
-      await invoiceService.ensureUnitBusinessAttributes(existingInvoice.id, {
+      await invoiceCreationService.ensureUnitBusinessAttributes(existingInvoice.id, {
         senderCnpj: invoiceBaseData.sender_cnpj,
         receiverCnpj: invoiceBaseData.receiver_cnpj,
         initialStatus: resolveInitialStatus(),
@@ -2081,7 +2079,7 @@ export class BlingApiFetchQueue extends BaseQueueService<
       // Reprocesso: cria os InvoiceItems que faltam pros itens que agora
       // resolvem a um Product (ex.: produto conciliado no Bling depois da
       // primeira passagem) — não duplica os que já existem.
-      await invoiceService.addMissingInvoiceItems(
+      await invoiceCreationService.addMissingInvoiceItems(
         existingInvoice.id,
         invoiceItemsForCreate,
       );
@@ -2118,7 +2116,7 @@ export class BlingApiFetchQueue extends BaseQueueService<
 
     if (nf.situacao === 2) {
       // Já existente: tira de lote aberto e grava CANCELLED (create já nasce CANCELLED).
-      await invoiceService.cancelInvoice(invoice.id);
+      await invoiceCancellationService.cancelInvoice(invoice.id);
       await pdvSalesRequestService.handleInvoiceCancelled(invoice.id);
     }
 
@@ -2129,7 +2127,7 @@ export class BlingApiFetchQueue extends BaseQueueService<
       BLING_AUTHORIZED_INVOICE_SITUATIONS.includes(nf.situacao ?? 0)
     ) {
       // Crítico: falha derruba o job pra retry (bond e cancelamento no PDV são idempotentes).
-      const returnedInvoiceId = await invoiceService.bondReturnInvoice(
+      const returnedInvoiceId = await invoiceCancellationService.bondReturnInvoice(
         { id: invoice.id, number_system: String(nf.numero) },
         nfeRefKey,
       );

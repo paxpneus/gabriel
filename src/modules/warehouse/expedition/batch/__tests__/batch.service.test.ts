@@ -38,9 +38,14 @@ jest.mock("../../../../../config/sequelize", () => ({
   default: { transaction: jest.fn((cb: any) => cb(mockTransaction)) },
 }));
 
-jest.mock("../../../fiscal/invoices/invoice/invoice.service", () => ({
+jest.mock("../../../fiscal/invoices/invoice", () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), findOne: jest.fn(), findTransfersToReceiverByNumbers: jest.fn() },
+  // Helpers puros da fachada seguem reais; só os services são mockados.
+  ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/bling-entrance-url"),
+  ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/transfer-reference"),
+  ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/totals"),
+  invoiceService: { findAll: jest.fn(), findOne: jest.fn() },
+  transferReferenceService: { findTransfersToReceiverByNumbers: jest.fn() },
 }));
 
 jest.mock(
@@ -116,7 +121,7 @@ jest.mock("../../../../handlers/bling/api/bling_api.service", () => ({
 import { assertAdtBatchTransferReferences } from "../helpers/transfer-reference";
 import auditLogService from "../../../../global/audit-logs/audit-log.service";
 import userService from "../../../../company/users/users/user.service";
-import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
+import { invoiceService, transferReferenceService } from "../../../fiscal/invoices/invoice";
 import batchInvoicesService from "../../batch-invoices/batch-invoices.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
@@ -1276,14 +1281,14 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
           sale("inv-1", "1001", "REF: 437", transporter),
           sale("inv-2", "1002", "REF: 0438", transporter),
         ]);
-        (invoiceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([
+        (transferReferenceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([
           { id: "tr-1", number_system: "000437", normalized_number: "437" },
           { id: "tr-2", number_system: "438", normalized_number: "438" },
         ]);
 
         await service.generateBatchFromQrCode("src-batch", "ub-1", undefined, "REGULAR", "job-1");
 
-        expect(invoiceService.findTransfersToReceiverByNumbers).toHaveBeenCalledWith(["437", "438"], STORE_CNPJ);
+        expect(transferReferenceService.findTransfersToReceiverByNumbers).toHaveBeenCalledWith(["437", "438"], STORE_CNPJ);
         expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
           ["tr-1", "tr-2"], "ub-1", "INCOMING", "REGULAR", "job-1",
         );
@@ -1301,7 +1306,7 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
 
     it("transferência não encontrada pra esta loja → erro com número e venda", async () => {
       (invoiceService.findAll as jest.Mock).mockResolvedValue([sale("inv-1", "1001", "REF: 437", null)]);
-      (invoiceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([]);
+      (transferReferenceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([]);
 
       await expect(service.generateBatchFromQrCode("src-batch", "ub-1")).rejects.toThrow(
         "437 (ref. a nota de venda 1001)",
@@ -1325,7 +1330,7 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
 
       await service.generateBatchFromQrCode("src-batch", "ub-1").catch(() => undefined);
 
-      expect(invoiceService.findTransfersToReceiverByNumbers).not.toHaveBeenCalled();
+      expect(transferReferenceService.findTransfersToReceiverByNumbers).not.toHaveBeenCalled();
     });
   });
 });

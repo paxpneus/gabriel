@@ -43,7 +43,7 @@ import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import { endOfDayTz, startOfDayTz } from "../../../../shared/utils/normalizers/date";
-import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
+import { invoiceService, buildBlingEntranceInvoiceUrl } from "../../fiscal/invoices/invoice";
 import invoiceItemsService from "../../fiscal/invoices/invoice-items/invoice-items.service";
 import { ensureSameBy } from "../../../../shared/utils/validators/same-not-allowed";
 import transporterService from "../../transporter/transporter.service";
@@ -93,7 +93,6 @@ import {
 } from "../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { getBlingIntegration } from "../../../handlers/bling/api/bling_api.service";
 import { FINAL_JOB_STATUSES, JobStatus, toJobStatus } from "../../../../shared/utils/queues/job-status";
-import { buildBlingEntranceInvoiceUrl } from "../../fiscal/invoices/invoice/helpers/bling-entrance-url";
 import { UNMAPPED_REASONS_NOT_RECONCILED_IN_BLING } from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.types";
 
 // Avaliação de conciliação na Bling (lote de entrada): prefixo do jobId e retenção do job concluído — a retenção é também a validade da avaliação.

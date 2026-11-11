@@ -1,3 +1,11 @@
+// Fachada da invoice carrega todos os services (Redis/BullMQ); aqui só os helpers SQL puros são usados, reais.
+jest.mock("../../../warehouse/fiscal/invoices/invoice", () => ({
+  __esModule: true,
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/totals"),
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/custom-filters"),
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/nfe-ide"),
+}));
+
 // Redis em memória: cachedReport grava/lê o relatório aqui (sem conexão real, o Jest sai).
 const store = new Map<string, unknown>();
 jest.mock("../../../../shared/utils/base-models/base-redis", () => ({

@@ -37,9 +37,9 @@ jest.mock("../../../../../config/sequelize", () => ({
   default: { transaction: jest.fn((cb: any) => cb({})) },
 }));
 
-jest.mock("../../../fiscal/invoices/invoice/invoice.service", () => ({
+jest.mock("../../../fiscal/invoices/invoice", () => ({
   __esModule: true,
-  default: { findById: jest.fn(), findAll: jest.fn() },
+  invoiceService: { findById: jest.fn(), findAll: jest.fn() },
 }));
 
 jest.mock("../../../../company/unit-business/unit-business.service", () => ({
@@ -71,7 +71,7 @@ jest.mock(
 );
 
 import { Op } from "sequelize";
-import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../../fiscal/invoices/invoice";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import batchInvoicesService from "../../batch-invoices/batch-invoices.service";

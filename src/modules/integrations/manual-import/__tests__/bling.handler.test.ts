@@ -8,9 +8,9 @@ jest.mock("../../../handlers/bling/services/bling/helpers/get-with-sleep", () =>
   __esModule: true,
   blingGet: jest.fn(),
 }));
-jest.mock("../../../warehouse/fiscal/invoices/invoice/invoice.service", () => ({
+jest.mock("../../../warehouse/fiscal/invoices/invoice", () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), findOne: jest.fn() },
+  invoiceService: { findAll: jest.fn(), findOne: jest.fn() },
 }));
 jest.mock("../../../sales/orders/order/orders.service", () => ({
   __esModule: true,
@@ -29,7 +29,7 @@ jest.mock("../helpers/product-mapping", () => ({
 import { Op } from "sequelize";
 import { getBlingIntegration } from "../../../handlers/bling/api/bling_api.service";
 import { blingGet } from "../../../handlers/bling/services/bling/helpers/get-with-sleep";
-import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../../warehouse/fiscal/invoices/invoice";
 import integrationOrderStatusMappingService from "../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import { BlingManualImportHandler } from "../providers/bling.handler";
 

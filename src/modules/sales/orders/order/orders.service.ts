@@ -8,7 +8,7 @@ import {
 } from "../order_payment/helpers/payments-view";
 import salesReportService from "../../../reports/daily-sales/sales-report/sales-report.service";
 import orderRepository, { OrderRepository } from "./orders.repository";
-import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceCancellationService, invoiceService } from "../../../warehouse/fiscal/invoices/invoice";
 import integrationService from "../../../integrations/integrations/integrations.service";
 import integrationOrderStatusMappingService from "../integration-order-status-mapping/integration-order-status-mapping.service";
 import { getBlingIntegration } from "../../../handlers/bling/api/bling_api.service";
@@ -384,7 +384,7 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       this.repository.countShipTodayPending(unitBusinessId),
       this.repository.countShipToDefine(),
       this.repository.countShipToFuture(),
-      invoiceService.countPendingCancellation(unitBusinessId),
+      invoiceCancellationService.countPendingCancellation(unitBusinessId),
     ]);
 
     return {

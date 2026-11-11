@@ -13,7 +13,7 @@ import {
   fetchBlingListPage,
   mapBlingInvoiceStatus,
 } from "../../../handlers/bling/services/bling-sync/helpers/bling-list";
-import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../../warehouse/fiscal/invoices/invoice";
 import orderService from "../../../sales/orders/order/orders.service";
 import integrationOrderStatusMappingService from "../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import { ManualImportError } from "../manual-import.errors";

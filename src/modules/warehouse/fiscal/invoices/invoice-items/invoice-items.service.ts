@@ -13,7 +13,7 @@ import batchItemsService from "../../../expedition/batch-items/batch-items.servi
 import ExpeditionBatch from "../../../expedition/batch/batch.model";
 import batchService from "../../../expedition/batch/batch.service";
 import InvoiceFiscalItem from "../invoice-fiscal-item/invoice-fiscal-item.model";
-import invoiceService from "../invoice/invoice.service";
+import { invoiceLifecycleService, invoiceService } from "../invoice";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import InvoiceItems from "./invoice-items.model";
 import invoiceItemsRepository, {
@@ -109,7 +109,7 @@ export class InvoiceItemsService extends BaseService<
       if (incomingAttr?.status !== "WAITING_SCHEDULE_SALES") {
         // Só reabre unit business attributes fora de lote — as que já
         // estão em lote (batch_generated) permanecem PENDING.
-        await invoiceService.updateInvoicesForAllUnitBusiness(
+        await invoiceLifecycleService.updateInvoicesForAllUnitBusiness(
           [invoiceItemDto.invoice_id!],
           { status: "OPEN" },
           { batch_generated: false },

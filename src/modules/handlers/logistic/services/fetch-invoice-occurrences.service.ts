@@ -1,4 +1,4 @@
-import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../../warehouse/fiscal/invoices/invoice";
 import invoiceLogisticOccurrencesService from "../../../warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.service";
 import invoiceLogisticOccurrencesRepository, {
   InvoiceLogisticOccurrencesRepository,

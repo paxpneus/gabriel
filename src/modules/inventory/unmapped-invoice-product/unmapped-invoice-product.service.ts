@@ -39,11 +39,10 @@ import {
 } from "../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { resolveTecincoBranchId } from "../../../shared/utils/tecinco/resolve-branch-id";
 import { TCarProdutoPayload } from "../../handlers/tecinco/service/tecinco/tecinco.types";
-import invoiceService from "../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceCreationService, invoiceService, buildBlingEntranceInvoiceUrl } from "../../warehouse/fiscal/invoices/invoice";
 import invoiceItemsService from "../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import pdvSalesRequestService from "../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { JobStatus, toJobStatus } from "../../../shared/utils/queues/job-status";
-import { buildBlingEntranceInvoiceUrl } from "../../warehouse/fiscal/invoices/invoice/helpers/bling-entrance-url";
 
 // Quanto tempo o job de criação de produto fica visível no Redis depois de
 // concluir (ver createProduct/getCreateProductJobStatus) — a fila por
@@ -328,7 +327,7 @@ export class UnmappedInvoiceProductService extends BaseService<
     await Promise.all(
       pendingRows.map(async (row) => {
         if (row.invoice_id) {
-          await invoiceService.addMissingInvoiceItems(row.invoice_id, [
+          await invoiceCreationService.addMissingInvoiceItems(row.invoice_id, [
             {
               product_id: params.productId,
               quantity_expected: Math.trunc(Number(row.quantity ?? 0)),

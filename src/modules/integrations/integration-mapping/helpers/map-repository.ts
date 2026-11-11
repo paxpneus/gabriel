@@ -3,7 +3,7 @@ import productRepository from "../../../inventory/products/repository/product.re
 // Fachada do core (não a de contacts): a da entidade puxa sellers → integration-mapping.service e fecha ciclo com este mapa.
 import { contactRepository as contactsRepository } from "../../../sales/contacts/core";
 import orderRepository from "../../../sales/orders/order/orders.repository";
-import invoiceRepository from "../../../warehouse/fiscal/invoices/invoice/invoice.repository";
+import { invoiceRepository } from "../../../warehouse/fiscal/invoices/invoice";
 import paymentMethodRepository from "../../../sales/orders/payment_method/payment_method.repository";
 import { EntityType } from "../integration-mapping.types";
 

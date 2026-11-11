@@ -18,7 +18,7 @@ import { StoreService } from "../../../../sales/stores/stores.service";
 import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import { Product, ProductConfig } from "../../../../inventory";
 import { UnitBusiness } from "../../../../warehouse";
-import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceIngestionService, invoiceService } from "../../../../warehouse/fiscal/invoices/invoice";
 import {
   BlingApiFetchQueue,
   type BlingApiInvoice,
@@ -289,7 +289,7 @@ export class BlingOrderService {
       }
 
       const integration = await getBlingIntegration();
-      const created = await invoiceService.createStub({
+      const created = await invoiceIngestionService.createStub({
         integrationsId: integration.id,
         numberSystem: nf.numero,
         idSystem,

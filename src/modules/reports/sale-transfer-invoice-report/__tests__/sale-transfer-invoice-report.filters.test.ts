@@ -1,3 +1,11 @@
+// Fachada da invoice carrega todos os services (Redis/BullMQ); aqui só os helpers SQL puros são usados, reais.
+jest.mock("../../../warehouse/fiscal/invoices/invoice", () => ({
+  __esModule: true,
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/totals"),
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/custom-filters"),
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/nfe-ide"),
+}));
+
 // SQL desses helpers é só Postgres; o sequelize de teste é sqlite (cita com crase), então usa instância postgres sem conexão.
 jest.mock("../../../../config/sequelize", () => {
   const { Sequelize } = jest.requireActual("sequelize");

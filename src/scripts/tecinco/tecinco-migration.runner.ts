@@ -26,7 +26,7 @@ import {
   TCAR_INVOICE_XML_UNAVAILABLE_FAILURE,
 } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
-import invoiceService from "../../modules/warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceCancellationService } from "../../modules/warehouse/fiscal/invoices/invoice";
 import { tecincoUnitBusinessForPopulate } from "../../shared/constants/tecinco-units";
 import { getTCarIntegration } from "../../modules/handlers/tecinco/api/tecinco_api";
 import integrationMappingService from "../../modules/integrations/integration-mapping/integration-mapping.service";
@@ -388,7 +388,7 @@ export async function migrateNotasCanceladas(
         (invoices) =>
           new Set(invoices.map((invoice) => invoice.xml_key).filter((key): key is string => !!key)),
       ),
-      invoiceService
+      invoiceCancellationService
         .findXmlKeysNotCancelledInUnitBusinesses(chaves, tecincoUnitBusinessForPopulate)
         .then((keys) => new Set(keys)),
     ]);
