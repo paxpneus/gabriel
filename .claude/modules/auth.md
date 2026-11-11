@@ -38,7 +38,7 @@ Cross-cutting tenant/auth scoping model. Read before touching auth/scoping on an
 ## Sessão e login
 - `authenticate` (token de usuário) chama `userService.assertActiveSession(id, iat)`: 401 se o usuário está desativado (`active=false`, lido do cache `user:<id>` — mesmo do `getMe`/`userPermissions` — ou do banco) ou se o token foi emitido antes da última troca de senha (`user-token-revoked-before:<id>` no Redis, TTL 8h = vida do JWT, gravado por `revokeTokens` no `updateUserWithValidation` quando vem `password`). JWT sozinho não basta mais.
 - Cache `user:<id>` limpo antes e depois do `updateUserWithValidation` e no soft delete (`delete`/`bulkDelete`).
-- `verifyCredentials` (login normal e de afiliado): mesma mensagem "E-mail ou senha inválidos" pra e-mail inexistente e senha errada (sem enumeração); "Usuário desativado" só depois da senha certa. 5 erros por e-mail (`login-attempts:<email minúsculo>`, janela de 15 min a partir do 1º erro) → 429 "Muitas tentativas..." (erro com `status: 429`, os 2 controllers de login repassam); login certo zera o contador.
+- `verifyCredentials` (login normal e de afiliado): mesma mensagem "E-mail ou senha inválidos" pra e-mail inexistente e senha errada (sem enumeração); "Usuário desativado" só depois da senha certa. 5 erros por e-mail (`login-attempts:<email minúsculo>`, janela de 5 min a partir do 1º erro) → 429 "Muitas tentativas..." (erro com `status: 429`, os 2 controllers de login repassam); login certo zera o contador.
 
 ## Filtro `?store_number=` (application)
 

@@ -29,9 +29,9 @@ import { UserType } from "../user_config/user_config.types";
 const TOKEN_TTL_SECONDS = 8 * 60 * 60;
 const tokenRevokedKey = (userId: string) => `user-token-revoked-before:${userId}`;
 
-// Força bruta: 5 erros de senha por e-mail travam o login por 15 min (contador zera no login certo).
+// Força bruta: 5 erros de senha por e-mail travam o login por 5 min (contador zera no login certo).
 const LOGIN_MAX_ATTEMPTS = 5;
-const LOGIN_LOCK_SECONDS = 15 * 60;
+const LOGIN_LOCK_SECONDS = 5 * 60;
 const loginAttemptsKey = (email: string) => `login-attempts:${String(email ?? "").trim().toLowerCase()}`;
 // Mesma mensagem pra e-mail inexistente e senha errada: não revela quais e-mails têm conta.
 const INVALID_CREDENTIALS = "E-mail ou senha inválidos";
@@ -397,7 +397,7 @@ export class UserService extends BaseService<User, UserRepository> {
     const attemptsKey = loginAttemptsKey(email);
     const attempts = Number((await redisService.get<number>(attemptsKey)) ?? 0);
     if (attempts >= LOGIN_MAX_ATTEMPTS) {
-      throw Object.assign(new Error("Muitas tentativas de login. Tente novamente em 15 minutos."), { status: 429 });
+      throw Object.assign(new Error("Muitas tentativas de login. Tente novamente em 5 minutos."), { status: 429 });
     }
 
     const user = await this.repository.getFullUser({
@@ -406,7 +406,7 @@ export class UserService extends BaseService<User, UserRepository> {
 
     const validPassword = user ? await bcrypt.compare(password, user.password) : false;
     if (!user || !validPassword) {
-      // Janela de 15 min começa no 1º erro (EXPIRE só quando o contador nasce).
+      // Janela de 5 min começa no 1º erro (EXPIRE só quando o contador nasce).
       const count = await redisService.client.incr(attemptsKey);
       if (count === 1) await redisService.client.expire(attemptsKey, LOGIN_LOCK_SECONDS);
       throw new Error(INVALID_CREDENTIALS);
