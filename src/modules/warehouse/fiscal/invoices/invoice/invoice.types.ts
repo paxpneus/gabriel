@@ -37,6 +37,7 @@ export interface InvoiceAttributes {
   seller_id?: string | null;
   supplier_id?: string | null;
   origin_unit_business_id?: string | null;
+  invoice_operation_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[]
@@ -100,6 +101,7 @@ export interface FullInvoiceAttributes {
   seller_id?: string | null;
   supplier_id?: string | null;
   origin_unit_business_id?: string | null;
+  invoice_operation_id?: string | null;
   originUnitBusiness?: Pick<UnitBusinessAttributes, "id" | "name" | "number" | "cnpj"> | null;
   createdAt?: Date;
   updatedAt?: Date;
@@ -164,6 +166,7 @@ export interface FullInvoiceAttributesForAllUnits {
   transporter_id?: string | null;
   seller_id?: string | null;
   supplier_id?: string | null;
+  invoice_operation_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[];

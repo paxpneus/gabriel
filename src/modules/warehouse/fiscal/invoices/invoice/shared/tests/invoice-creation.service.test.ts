@@ -84,6 +84,11 @@ jest.mock("../../../invoice-unit-business-attributes/invoice-unit-business-attri
   default: { createInvoiceAttributes: jest.fn(), findInvoiceAttribute: jest.fn() },
 }));
 
+jest.mock("../../../invoice-operation/invoice-operation.repository", () => ({
+  __esModule: true,
+  default: { findIdByCode: jest.fn() },
+}));
+
 jest.mock("../../../../../../company/events/event/event.service", () => ({
   __esModule: true,
   default: {
@@ -105,12 +110,15 @@ import attributesRepoDefault from "../repositories/invoice-attributes.repository
 import itemsRepoDefault from "../../../invoice-items/invoice-items.repository";
 import fiscalItemRepoDefault from "../../../invoice-fiscal-item/invoice-fiscal-item.repository";
 import ubAttrRepoDefault from "../../../invoice-unit-business-attributes/invoice-unit-business-attributes.repository";
+import operationRepoDefault from "../../../invoice-operation/invoice-operation.repository";
+import { INVOICE_OPERATION_CODES } from "../../../invoice-operation/invoice-operation.types";
 
 const creationRepo = creationRepoDefault as unknown as { createInvoice: jest.Mock };
 const attributesRepo = attributesRepoDefault as unknown as { findUnitBusinessesByCnpj: jest.Mock };
 const itemsRepo = itemsRepoDefault as unknown as { createInvoiceItems: jest.Mock; findByInvoiceId: jest.Mock };
 const fiscalItemRepo = fiscalItemRepoDefault as unknown as { createInvoiceFiscalItems: jest.Mock; findByInvoiceId: jest.Mock };
 const ubAttrRepo = ubAttrRepoDefault as unknown as { createInvoiceAttributes: jest.Mock; findInvoiceAttribute: jest.Mock };
+const operationRepo = operationRepoDefault as unknown as { findIdByCode: jest.Mock };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -590,5 +598,75 @@ describe("InvoiceCreationService.ensureUnitBusinessAttributes", () => {
 
     expect(attributesRepo.findUnitBusinessesByCnpj).not.toHaveBeenCalled();
     expect(ubAttrRepo.createInvoiceAttributes).not.toHaveBeenCalled();
+  });
+});
+
+describe("InvoiceCreationService.resolveInvoiceOperationId", () => {
+  const SENDER = "12345678000190";
+  const RECEIVER = "98765432000110";
+
+  beforeEach(() => {
+    operationRepo.findIdByCode.mockImplementation(async (code: string) => `op-${code}`);
+  });
+
+  it("emitente e destinatário unit business (CNPJ com máscara) = transferência", async () => {
+    attributesRepo.findUnitBusinessesByCnpj.mockResolvedValue([
+      { id: UNIT_A, cnpj: SENDER },
+      { id: UNIT_B, cnpj: RECEIVER },
+    ]);
+
+    const id = await invoiceCreationService.resolveInvoiceOperationId({
+      senderCnpj: "12.345.678/0001-90",
+      receiverCnpj: RECEIVER,
+      direction: "OUTGOING",
+      isReturn: false,
+      isInternal: false,
+    });
+
+    expect(attributesRepo.findUnitBusinessesByCnpj).toHaveBeenCalledWith([SENDER, RECEIVER], undefined);
+    expect(id).toBe(`op-${INVOICE_OPERATION_CODES.TRANSFER}`);
+  });
+
+  it("só emitente unit business + saída = venda", async () => {
+    attributesRepo.findUnitBusinessesByCnpj.mockResolvedValue([{ id: UNIT_A, cnpj: SENDER }]);
+
+    const id = await invoiceCreationService.resolveInvoiceOperationId({
+      senderCnpj: SENDER,
+      receiverCnpj: EXTERNAL_CNPJ,
+      direction: "OUTGOING",
+      isReturn: false,
+      isInternal: false,
+    });
+
+    expect(id).toBe(`op-${INVOICE_OPERATION_CODES.SALE}`);
+  });
+
+  it("sem CNPJ nenhum não consulta unit business e cai em compra", async () => {
+    const id = await invoiceCreationService.resolveInvoiceOperationId({
+      senderCnpj: "",
+      receiverCnpj: null,
+      direction: null,
+      isReturn: false,
+      isInternal: false,
+    });
+
+    expect(attributesRepo.findUnitBusinessesByCnpj).not.toHaveBeenCalled();
+    expect(id).toBe(`op-${INVOICE_OPERATION_CODES.PURCHASE}`);
+  });
+
+  it("code fora da tabela (seed não rodado) = null", async () => {
+    attributesRepo.findUnitBusinessesByCnpj.mockResolvedValue([]);
+    operationRepo.findIdByCode.mockResolvedValue(null);
+
+    const id = await invoiceCreationService.resolveInvoiceOperationId({
+      senderCnpj: SENDER,
+      receiverCnpj: RECEIVER,
+      direction: "OUTGOING",
+      isReturn: true,
+      isInternal: false,
+    });
+
+    expect(operationRepo.findIdByCode).toHaveBeenCalledWith(INVOICE_OPERATION_CODES.RETURN);
+    expect(id).toBeNull();
   });
 });

@@ -25,7 +25,7 @@ import { getBlingIntegration } from "../../../modules/handlers/bling/api/bling_a
 import { logDbError } from "../logging/db-errors-logs";
 import { Op, QueryTypes } from "sequelize";
 import sequelize from "../../../config/sequelize";
-import { invoiceCancellationService, invoiceCreationService, invoiceIngestionService, invoiceLifecycleService, invoiceService, isReturnInvoicePurpose } from "../../../modules/warehouse/fiscal/invoices/invoice";
+import { invoiceCancellationService, invoiceCreationService, invoiceIngestionService, invoiceLifecycleService, invoiceService, isReturnInvoicePurpose, parseNfeOperationType } from "../../../modules/warehouse/fiscal/invoices/invoice";
 import invoiceItemsService from "../../../modules/warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import unitBusinessService from "../../../modules/company/unit-business/unit-business.service";
@@ -858,6 +858,16 @@ export async function upsertInvoiceFromXml(
     store_id = await Store.findOne({ where: { name: "Outros" } });
   }
 
+  // ─── Operação da nota ──────────────────────────────────────────────────────
+  // Direção só pra classificar (sem invoiceType, cai no tpNF); não muda a regra dos attributes.
+  const invoiceOperationId = await invoiceCreationService.resolveInvoiceOperationId({
+    senderCnpj,
+    receiverCnpj,
+    direction: invoiceType ?? parseNfeOperationType(ide.tpNF),
+    isReturn: isReturnInvoicePurpose(ide.finNFe),
+    isInternal: false,
+  });
+
   // ─── Dados base da invoice ─────────────────────────────────────────────────
 
   const invoiceBaseData = {
@@ -872,6 +882,7 @@ export async function upsertInvoiceFromXml(
     emitted_at: ide.dhEmi ? parseBlingDate(ide.dhEmi) : new Date(),
     number_system: numero,
     integrations_id: integration.id,
+    invoice_operation_id: invoiceOperationId,
     store_id: store_id?.id ?? "",
     transporter_id: transporter?.id ?? null,
     transporter_document: transporterDocument,

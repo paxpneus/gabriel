@@ -33,6 +33,7 @@ class Invoice
   public seller_id?: string | null;
   public supplier_id?: string | null;
   public origin_unit_business_id?: string | null;
+  public invoice_operation_id?: string | null;
   public printed_label!: boolean;
   public emitted_at?: Date;
   public received_at?: string;
@@ -200,6 +201,17 @@ Invoice.init(
       },
       onUpdate: "CASCADE",
       onDelete: "SET NULL",
+    },
+    // Operação (venda, compra, transferência...), classificada na ingestão (resolveInvoiceOperationId); null em stub.
+    invoice_operation_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "invoice_operations",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "RESTRICT",
     },
     transporter_name: {
       type: DataTypes.STRING(255),

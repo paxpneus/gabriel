@@ -98,6 +98,8 @@ const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "/api/tecinco/sync": "integrations",
   "/api/invoice-maintenance": "invoices",
   "/api/invoice-logistic-occurrences": "invoices",
+  // Operações de nota (sub-entidade da invoice): mesma permissão de Notas, sem permissão própria.
+  "/api/invoice-operation": "invoices",
   "/api/printer": "printer_configs",
   "multiplier-scan-inventory": "multiply-stk-inventory",
   "multiplier-scan-entrance": "multiply-stk-entrance",

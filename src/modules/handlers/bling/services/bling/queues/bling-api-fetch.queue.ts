@@ -1864,6 +1864,16 @@ export class BlingApiFetchQueue extends BaseQueueService<
     const ibsValue = fiscalTotals?.ibsValue ?? 0;
     const cbsValue = fiscalTotals?.cbsValue ?? 0;
 
+    // ─── Operação da nota ─────────────────────────────────────────────────────
+    // Direção pelo nf.tipo; devolução só vem do XML (finNFe), igual ao resolveInitialStatus.
+    const invoiceOperationId = await invoiceCreationService.resolveInvoiceOperationId({
+      senderCnpj,
+      receiverCnpj,
+      direction: invoiceType,
+      isReturn: isReturnInvoice,
+      isInternal: false,
+    });
+
     // ─── Invoice existente ────────────────────────────────────────────────────
 
     const existingInvoice = await invoiceService.findByIdFullForAllUnits(
@@ -1892,6 +1902,7 @@ export class BlingApiFetchQueue extends BaseQueueService<
       store_id: store_id!.id ?? null,
       seller_id: sellerId,
       origin_unit_business_id: originUnitBusiness?.id ?? null,
+      invoice_operation_id: invoiceOperationId,
       transporter_id: transporter?.id ?? null,
       transporter_document: transporter?.cnpj ?? transporter_document ?? null,
       transporter_name: transporter?.name ?? transporter_name ?? null,

@@ -7,6 +7,7 @@ export * from "./helpers/totals";
 export * from "./helpers/custom-filters";
 export * from "./helpers/nfe-ide";
 export * from "./helpers/invoice-direction";
+export * from "./helpers/invoice-operation";
 export * from "./helpers/delivery-note";
 export * from "./helpers/reference-description";
 export * from "./helpers/transfer-reference";

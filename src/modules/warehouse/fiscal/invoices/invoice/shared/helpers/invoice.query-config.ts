@@ -36,6 +36,8 @@ export const invoiceQueryConfig: QueryConfig = {
     "emitted_at",
     "store_id",
     "supplier_id",
+    // Filtro do front por operação (venda, compra, transferência...).
+    "invoice_operation_id",
   ],
   sortableFields: [
     "customer_name",

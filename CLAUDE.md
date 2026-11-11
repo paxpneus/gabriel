@@ -234,7 +234,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `index.md` — regras `type`/dedup, schema
   - `create-flow.md` — fluxo create-product-from-unmapped
 - `invoice/` — Invoice/InvoiceItems/InvoiceFiscalItem, import XML NF-e; invoice no nível 2 (shared, core, ingestion, lifecycle, cancellation, documents, labels, reports)
-  - `index.md` — visão geral, FK-on-delete, filtros/fixes menores, auth, `tracking_url` (link de rastreio, só Bling), carta de correção (libera nota CD 12/17 sem transferência no lote)
+  - `index.md` — visão geral, FK-on-delete, filtros/fixes menores, auth, `tracking_url` (link de rastreio, só Bling), carta de correção (libera nota CD 12/17 sem transferência no lote), operação da nota (`invoice_operations`: classificação na ingestão, filtro, backfill)
   - `item-resolution.md` — ordem de resolução de produto, cascata de mapeamento manual, fixes de duplicate-key
   - `ml-shipping-filters.md` — filtros da fila de shipping Mercado Livre
   - `supplier-discount/filter.md` — filtros `rim`/`supplier_discount`

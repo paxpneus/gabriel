@@ -11,6 +11,10 @@ import invoiceAttributesRepository from "../repositories/invoice-attributes.repo
 import invoiceItemsRepository from "../../../invoice-items/invoice-items.repository";
 import invoiceFiscalItemRepository from "../../../invoice-fiscal-item/invoice-fiscal-item.repository";
 import invoiceUnitBusinessAttributesRepository from "../../../invoice-unit-business-attributes/invoice-unit-business-attributes.repository";
+import invoiceOperationRepository from "../../../invoice-operation/invoice-operation.repository";
+import { cleanDocument } from "../../../../../../../shared/utils/normalizers/document";
+import { InvoiceDirection } from "../helpers/invoice-direction";
+import { resolveInvoiceOperationCode } from "../helpers/invoice-operation";
 
 // Criação de nota com itens/attributes e reprocesso de itens/attributes faltantes, usada por ingestão e integrações.
 export class InvoiceCreationService extends BaseService<Invoice, InvoiceCreationRepository> {
@@ -319,6 +323,36 @@ export class InvoiceCreationService extends BaseService<Invoice, InvoiceCreation
     if (toCreate.length > 0) {
       await invoiceUnitBusinessAttributesRepository.createInvoiceAttributes(toCreate, transaction);
     }
+  }
+
+  // invoice_operation_id da nota pelas partes (CNPJ de unit business), direção, finNFe e série interna.
+  // null se a tabela de operações ainda não tem o code (seed da m351 não rodado).
+  async resolveInvoiceOperationId(params: {
+    senderCnpj?: string | null;
+    receiverCnpj?: string | null;
+    direction: InvoiceDirection | null;
+    isReturn: boolean;
+    isInternal: boolean;
+    transaction?: Transaction;
+  }): Promise<string | null> {
+    const senderCnpj = cleanDocument(params.senderCnpj ?? "");
+    const receiverCnpj = cleanDocument(params.receiverCnpj ?? "");
+    const cnpjs = [senderCnpj, receiverCnpj].filter(Boolean);
+
+    let unitBusinessCnpjs = new Set<string>();
+    if (cnpjs.length > 0) {
+      const unitBusinesses = await invoiceAttributesRepository.findUnitBusinessesByCnpj(cnpjs, params.transaction);
+      unitBusinessCnpjs = new Set(unitBusinesses.map((ub) => ub.cnpj));
+    }
+
+    const code = resolveInvoiceOperationCode({
+      senderIsUnitBusiness: !!senderCnpj && unitBusinessCnpjs.has(senderCnpj),
+      receiverIsUnitBusiness: !!receiverCnpj && unitBusinessCnpjs.has(receiverCnpj),
+      direction: params.direction,
+      isReturn: params.isReturn,
+      isInternal: params.isInternal,
+    });
+    return invoiceOperationRepository.findIdByCode(code);
   }
 }
 
