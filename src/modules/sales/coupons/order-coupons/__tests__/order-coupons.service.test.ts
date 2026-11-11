@@ -1,4 +1,4 @@
-// Comissão do afiliado congelada em order_coupons (registerFromMagento).
+// Comissão do afiliado em order_coupons: dono/taxa congelados (registerFromMagento), valor acompanha o pedido (syncCommissionWithOrder).
 
 const mockTransaction = {} as any;
 
@@ -28,6 +28,7 @@ jest.mock("../../order-coupons/order-coupons.repository", () => ({
     findByOrderAndCoupon: jest.fn(),
     findAffiliatedByOrder: jest.fn(),
     create: jest.fn(),
+    updateCommissionAmount: jest.fn(),
   },
 }));
 
@@ -183,9 +184,64 @@ describe("OrderCouponService.registerFromMagento", () => {
     );
   });
 
+  it("hora da venda na Magento (orderedAt): é a data de referência do dono", async () => {
+    const orderedAt = new Date("2026-10-20T13:05:00Z");
+    await service.registerFromMagento({ orderId: ORDER_ID, couponCode: "afi10", discountAmount: 30, orderedAt });
+
+    expect(contactCouponService.findOwnerAt).toHaveBeenCalledWith(COUPON.id, orderedAt, mockTransaction);
+  });
+
+  it("arredonda em centavos como o SQL (8,20 × 7,5% = 0,615 → 0,62)", async () => {
+    (orderService.findById as jest.Mock).mockResolvedValue({ ...baseOrder, total_products: "8.20", discount_value: "0" });
+    (contactCouponService.findOwnerAt as jest.Mock).mockResolvedValue({ ...OWNER, commission_rate: "7.50" });
+
+    await register();
+
+    expect(orderCouponRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ commission_amount: 0.62 }),
+      expect.anything(),
+    );
+  });
+
   it("pedido inexistente: lança", async () => {
     (orderService.findById as jest.Mock).mockResolvedValue(null);
 
     await expect(register()).rejects.toThrow(`Order ${ORDER_ID} not found`);
+  });
+});
+
+describe("OrderCouponService.syncCommissionWithOrder", () => {
+  let service: OrderCouponService;
+  const AFFILIATED = { order_id: ORDER_ID, coupon_id: COUPON.id, contact_coupon_id: OWNER.id, commission_rate: "5.00", commission_amount: "45.00" };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new OrderCouponService();
+    (orderCouponRepository.findAffiliatedByOrder as jest.Mock).mockResolvedValue(AFFILIATED);
+  });
+
+  it("total do pedido mudou: refaz o valor com a taxa congelada", async () => {
+    (orderService.findById as jest.Mock).mockResolvedValue({ ...baseOrder, total_products: "439.00", discount_value: "50.00" });
+
+    await service.syncCommissionWithOrder(ORDER_ID);
+
+    expect(orderCouponRepository.updateCommissionAmount).toHaveBeenCalledWith(ORDER_ID, COUPON.id, 19.45); // (439 − 50) × 5%
+  });
+
+  it("valor igual: não grava", async () => {
+    (orderService.findById as jest.Mock).mockResolvedValue(baseOrder);
+
+    await service.syncCommissionWithOrder(ORDER_ID);
+
+    expect(orderCouponRepository.updateCommissionAmount).not.toHaveBeenCalled();
+  });
+
+  it("pedido sem afiliado: nada a fazer", async () => {
+    (orderCouponRepository.findAffiliatedByOrder as jest.Mock).mockResolvedValue(null);
+
+    await service.syncCommissionWithOrder(ORDER_ID);
+
+    expect(orderService.findById).not.toHaveBeenCalled();
+    expect(orderCouponRepository.updateCommissionAmount).not.toHaveBeenCalled();
   });
 });

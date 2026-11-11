@@ -72,6 +72,8 @@ jest.mock(
     default: {
       createOrUpdateIntegrationMapping: jest.fn(),
       findExternalIdsMap: jest.fn(),
+      findOne: jest.fn(),
+      update: jest.fn(),
     },
   }),
 );
@@ -101,6 +103,11 @@ jest.mock("../../../../sales/coupons/order-coupons/order-coupons.service", () =>
   default: { registerFromMagento: jest.fn() },
 }));
 
+jest.mock("../../../../sales/orders/order/orders.service", () => ({
+  __esModule: true,
+  default: { findById: jest.fn() },
+}));
+
 import productService from "../../../../inventory/products/services/product.service";
 import productConfigService from "../../../../inventory/product-config/product_config.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
@@ -109,6 +116,7 @@ import { getMagentoIntegration } from "../../api/magentoV2_api";
 import magentoCatalogService from "../../service/catalog/products/products.service";
 import magentoSalesOrderService from "../../service/sales/orders/orders.service";
 import orderCouponService from "../../../../sales/coupons/order-coupons/order-coupons.service";
+import ordersService from "../../../../sales/orders/order/orders.service";
 
 const UNIT_BUSINESS_ID = "ub-bling-1";
 const MAGENTO_INTEGRATION_ID = "magento-integration-1";
@@ -472,11 +480,19 @@ describe("MagentoSyncQueue", () => {
   });
 
   describe("fetch-order", () => {
-    it("pedido com cupom: registra cupom com desconto em valor absoluto", async () => {
+    const MAPPING = { entity_type: "ORDER", integrations_id: MAGENTO_INTEGRATION_ID, external_id: "631" };
+
+    beforeEach(() => {
+      (getMagentoIntegration as jest.Mock).mockResolvedValue({ id: MAGENTO_INTEGRATION_ID });
+      (integrationMappingService.findOne as jest.Mock).mockResolvedValue(null);
+    });
+
+    it("pedido com cupom: registra (desconto absoluto, hora da venda em UTC) e só depois grava o mapping", async () => {
       (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockResolvedValue({
         entity_id: 631,
-        coupon_code: "AFI10",
+        coupon_code: " AFI10 ",
         discount_amount: -42.5,
+        created_at: "2026-11-10 14:03:22",
       });
 
       await runFetchOrder(queue);
@@ -486,21 +502,54 @@ describe("MagentoSyncQueue", () => {
         orderId: "order-1",
         couponCode: "AFI10",
         discountAmount: 42.5,
+        orderedAt: new Date("2026-11-10T14:03:22Z"),
       });
+      expect(integrationMappingService.createOrUpdateIntegrationMapping).toHaveBeenCalledWith({
+        ...MAPPING,
+        internal_id: "order-1",
+      });
+      const registerOrder = (orderCouponService.registerFromMagento as jest.Mock).mock.invocationCallOrder[0];
+      const mappingOrder = (integrationMappingService.createOrUpdateIntegrationMapping as jest.Mock).mock.invocationCallOrder[0];
+      expect(registerOrder).toBeLessThan(mappingOrder);
     });
 
-    it("pedido sem cupom: não registra nada", async () => {
-      (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockResolvedValue({
-        entity_id: 631,
-        coupon_code: null,
-      });
+    it.each([[null], ["   "], ["X".repeat(51)]])(
+      "cupom ausente/em branco/longo demais (%p): não registra, mas grava o mapping",
+      async (couponCode) => {
+        jest.spyOn(console, "warn").mockImplementation(() => undefined);
+        (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockResolvedValue({ entity_id: 631, coupon_code: couponCode });
+
+        await runFetchOrder(queue);
+
+        expect(orderCouponService.registerFromMagento).not.toHaveBeenCalled();
+        expect(integrationMappingService.createOrUpdateIntegrationMapping).toHaveBeenCalled();
+      },
+    );
+
+    it("pedido Magento já é de outro pedido que ainda existe (duplicado): não chama a Magento", async () => {
+      jest.spyOn(console, "warn").mockImplementation(() => undefined);
+      (integrationMappingService.findOne as jest.Mock).mockResolvedValue({ id: "map-1", internal_id: "order-0" });
+      (ordersService.findById as jest.Mock).mockResolvedValue({ id: "order-0" });
 
       await runFetchOrder(queue);
 
+      expect(magentoSalesOrderService.getOrderCoupon).not.toHaveBeenCalled();
       expect(orderCouponService.registerFromMagento).not.toHaveBeenCalled();
+      expect(integrationMappingService.update).not.toHaveBeenCalled();
     });
 
-    it("404 na Magento: UnrecoverableError (retry não resolve)", async () => {
+    it("mapping órfão (pedido antigo apagado): passa o mapping pra este pedido e busca o cupom", async () => {
+      (integrationMappingService.findOne as jest.Mock).mockResolvedValue({ id: "map-1", internal_id: "order-0" });
+      (ordersService.findById as jest.Mock).mockResolvedValue(null);
+      (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockResolvedValue({ entity_id: 631, coupon_code: "AFI10" });
+
+      await runFetchOrder(queue);
+
+      expect(integrationMappingService.update).toHaveBeenCalledWith("map-1", { internal_id: "order-1" });
+      expect(orderCouponService.registerFromMagento).toHaveBeenCalled();
+    });
+
+    it("404 na Magento: UnrecoverableError e sem mapping (o próximo update da Bling tenta de novo)", async () => {
       (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockRejectedValue({
         isAxiosError: true,
         response: { status: 404 },
@@ -509,6 +558,14 @@ describe("MagentoSyncQueue", () => {
 
       await expect(runFetchOrder(queue)).rejects.toBeInstanceOf(UnrecoverableError);
       expect(orderCouponService.registerFromMagento).not.toHaveBeenCalled();
+      expect(integrationMappingService.createOrUpdateIntegrationMapping).not.toHaveBeenCalled();
+    });
+
+    it("Magento fora (500): erro propaga pro retry e sem mapping", async () => {
+      (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockRejectedValue(new Error("boom"));
+
+      await expect(runFetchOrder(queue)).rejects.toThrow("boom");
+      expect(integrationMappingService.createOrUpdateIntegrationMapping).not.toHaveBeenCalled();
     });
   });
 });

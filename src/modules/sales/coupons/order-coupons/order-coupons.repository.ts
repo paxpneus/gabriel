@@ -20,9 +20,17 @@ export class OrderCouponRepository extends BaseRepository<OrderCoupon> {
   findAffiliatedByOrder(orderId: string, transaction?: Transaction) {
     return this.model.findOne({
       where: { order_id: orderId, contact_coupon_id: { [Op.ne]: null } },
-      attributes: ["order_id", "coupon_id", "contact_coupon_id"],
+      attributes: ["order_id", "coupon_id", "contact_coupon_id", "commission_rate", "commission_amount"],
       transaction,
     });
+  }
+
+  // PK composta (pedido + cupom): o update genérico por id não serve.
+  updateCommissionAmount(orderId: string, couponId: string, commissionAmount: number, transaction?: Transaction) {
+    return this.model.update(
+      { commission_amount: commissionAmount },
+      { where: { order_id: orderId, coupon_id: couponId }, transaction },
+    );
   }
 }
 

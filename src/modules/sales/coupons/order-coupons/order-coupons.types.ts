@@ -15,4 +15,6 @@ export interface RegisterOrderCouponDto {
   orderId: string;
   couponCode: string;
   discountAmount: number;
+  // Hora real da venda (created_at da Magento); ausente = createdAt do pedido limitado ao fim do dia.
+  orderedAt?: Date;
 }

@@ -5,7 +5,7 @@ import {
   OrderCouponCreationAttributes,
 } from "./order-coupons.types";
 
-// Cupom usado no pedido com afiliado/taxa/comissão congelados na ingestão; nunca recalculado.
+// Cupom usado no pedido; afiliado e taxa congelados na ingestão, valor da comissão acompanha o total do pedido.
 class OrderCoupon
   extends Model<OrderCouponAttributes, OrderCouponCreationAttributes>
   implements OrderCouponAttributes

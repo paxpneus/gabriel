@@ -3,9 +3,9 @@
 `src/modules/sales/coupons/` — `coupons/`, `contact-coupons/`, `order-coupons/` (sem rotas). Migration `m347`.
 
 ## Tabelas
-- `coupons`: `code` UNIQUE (sempre `trim().toUpperCase()` — `CouponService.normalizeCode` no create/update/`findOrCreateByCode`), `discount_type` (`percent|fixed`, nullable), `discount_value` (nullable), `active`. Cupom genérico: pode não ter afiliado.
+- `coupons`: `code` UNIQUE, até `COUPON_CODE_MAX_LENGTH` (50) (sempre `trim().toUpperCase()` — `CouponService.normalizeCode` no create/update/`findOrCreateByCode`; `findOrCreateByCode` usa `findOrCreate` do Sequelize, com savepoint, então jobs concorrentes com o mesmo código novo não quebram no UNIQUE), `discount_type` (`percent|fixed`, nullable), `discount_value` (nullable; `percent` ≤ 100, validado no service inclusive em update parcial), `active`. Cupom genérico: pode não ter afiliado.
 - `contact_coupons`: vínculo afiliado (`contacts.type = AFFILIATED`) ↔ cupom com `commission_rate` (%), `active`, `deactivated_at`. Índice parcial `UNIQUE (coupon_id) WHERE active` = um dono ativo por cupom; afiliado pode ter vários cupons.
-- `order_coupons`: PK `(order_id, coupon_id)`, `contact_coupon_id` (nullable), `discount_amount` (desconto **total** do pedido na Magento — todas as regras somadas, ex.: cupom + PIX; a Magento não separa por regra; não entra na comissão nem em relatório), `commission_rate`, `commission_amount` (congelados), só `created_at`. Índice parcial `UNIQUE (order_id) WHERE contact_coupon_id IS NOT NULL` = no máximo um afiliado por pedido.
+- `order_coupons`: PK `(order_id, coupon_id)`, `contact_coupon_id` (nullable), `discount_amount` (desconto **total** do pedido na Magento — todas as regras somadas, ex.: cupom + PIX; a Magento não separa por regra; não entra na comissão nem em relatório), `commission_rate` (congelada), `commission_amount` (acompanha o pedido, ver `syncCommissionWithOrder`), só `created_at`. Índice parcial `UNIQUE (order_id) WHERE contact_coupon_id IS NOT NULL` = no máximo um afiliado por pedido.
 - **Nada é apagado**: FKs `RESTRICT` (exceto `order_id` → `CASCADE`); delete/bulk das rotas respondem 405. Cupom e vínculo só são inativados.
 
 ## Rotas
@@ -16,15 +16,18 @@
 ## Dono na data (`findOwnerAt`)
 `contact_coupons` com `created_at <= ref AND (deactivated_at IS NULL OR deactivated_at > ref)`, mais recente primeiro — não filtra `active`, então transferência/inativação posterior não muda o dono de pedido antigo.
 
-Data de referência (`registerFromMagento`): `orders.date` só tem o dia → usa `orders.created_at`, limitado a `date + 24h` (ingestão atrasada/backfill não cai num dono posterior à venda).
+Data de referência (`registerFromMagento`): `orderedAt` = `created_at` do pedido na Magento (UTC, hora real da venda). Sem ele, `orders.created_at` limitado a `date + 24h` (`orders.date` só tem o dia).
 
-## `OrderCouponService.registerFromMagento` (comissão congelada)
+## `OrderCouponService.registerFromMagento` (dono e taxa congelados)
 Chamado pelo job `fetch-order` da `MAGENTO_SYNC` (ver `../modules/magento-sync.md`):
 1. `couponService.findOrCreateByCode` — cupom desconhecido nasce ativo, sem desconto definido.
 2. Linha pedido+cupom já existe → retorna `null` sem recalcular nem fazer `touch`.
 3. Cupom inativo → sem dono (grava só o desconto). Ativo → `findOwnerAt`.
 4. Pedido já tem afiliado por outro cupom → grava este cupom sem afiliado (log em inglês).
-5. `commission_amount = round((total_products − desconto do pedido) × rate) / 100`; desconto `PERCENTUAL` = `total_products × valor / 100` (mesma base da comissão do vendedor).
+5. `commission_amount = (total_products − desconto do pedido) × rate / 100`; desconto `PERCENTUAL` = `total_products × valor / 100` (mesma base da comissão do vendedor). Conta em centavos inteiros (`commissionAmount`), arredondando igual ao `ROUND` do SQL (float dava 1 centavo a menos em meio-centavo).
 6. `orderService.touch(orderId)` pros jobs incrementais dos relatórios reprocessarem o pedido.
+
+## `syncCommissionWithOrder` (valor acompanha o pedido)
+Chamado no `updateOrderFromBling` depois de gravar os totais: pedido com afiliado tem `commission_amount` refeito com o total/desconto atuais × `commission_rate` congelada (só grava se mudou; o update do pedido já bumpa `updated_at` pros relatórios). Dono e taxa nunca mudam.
 
 Relatórios leem a comissão gravada via `order-coupons/helpers/affiliated-commission-sql.ts` (`orderAffiliateJoinSql`) — ver `../modules/reports.md`.

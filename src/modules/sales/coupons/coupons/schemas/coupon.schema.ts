@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { COUPON_DISCOUNT_TYPES } from "../coupons.types";
+import { COUPON_CODE_MAX_LENGTH, COUPON_DISCOUNT_TYPES } from "../coupons.types";
 
 // Body do POST /coupons; o código é normalizado (trim + maiúsculas) no service.
 export const CreateCouponSchema = z.object({
@@ -7,7 +7,7 @@ export const CreateCouponSchema = z.object({
     .string({ error: "Código do cupom é obrigatório" })
     .trim()
     .min(1, "Código do cupom é obrigatório")
-    .max(50, "Código do cupom deve ter no máximo 50 caracteres"),
+    .max(COUPON_CODE_MAX_LENGTH, `Código do cupom deve ter no máximo ${COUPON_CODE_MAX_LENGTH} caracteres`),
   discount_type: z
     .enum(COUPON_DISCOUNT_TYPES, { error: "Tipo de desconto deve ser percent ou fixed" })
     .nullable()

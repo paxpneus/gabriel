@@ -15,11 +15,12 @@ export class OrderCouponService extends BaseService<OrderCoupon, OrderCouponRepo
     super(orderCouponRepository);
   }
 
-  // Grava o cupom do pedido do site congelando dono/taxa/comissão; idempotente (nunca recalcula).
+  // Grava o cupom do pedido do site congelando dono e taxa; idempotente (linha existente não é refeita).
   async registerFromMagento({
     orderId,
     couponCode,
     discountAmount,
+    orderedAt,
   }: RegisterOrderCouponDto): Promise<OrderCoupon | null> {
     const order = await orderService.findById(orderId, {
       attributes: ["id", "date", "createdAt", "total_products", "discount_value", "discount_type"],
@@ -32,10 +33,13 @@ export class OrderCouponService extends BaseService<OrderCoupon, OrderCouponRepo
       const existing = await this.repository.findByOrderAndCoupon(orderId, coupon.id, t);
       if (existing) return null;
 
-      // orders.date só tem o dia: usa o createdAt, limitado ao fim do dia do pedido (ingestão atrasada).
-      const createdAt = new Date(order.createdAt);
-      const endOfOrderDay = order.date ? new Date(new Date(order.date).getTime() + ONE_DAY_MS) : null;
-      const referenceDate = endOfOrderDay && endOfOrderDay < createdAt ? endOfOrderDay : createdAt;
+      // Hora da venda na Magento; sem ela, createdAt do pedido limitado ao fim do dia (orders.date só tem o dia).
+      let referenceDate = orderedAt;
+      if (!referenceDate) {
+        const createdAt = new Date(order.createdAt);
+        const endOfOrderDay = order.date ? new Date(new Date(order.date).getTime() + ONE_DAY_MS) : null;
+        referenceDate = endOfOrderDay && endOfOrderDay < createdAt ? endOfOrderDay : createdAt;
+      }
 
       // Cupom inativo: grava só o desconto, sem afiliado/comissão.
       let owner = coupon.active
@@ -49,18 +53,9 @@ export class OrderCouponService extends BaseService<OrderCoupon, OrderCouponRepo
         owner = null;
       }
 
-      // Base = produtos − desconto do pedido (mesma base da comissão do vendedor).
-      const totalProducts = Number(order.total_products ?? 0);
-      const discountValue = Number(order.discount_value ?? 0);
-      const orderDiscount =
-        order.discount_type === ORDER_DISCOUNT_TYPE_PERCENT
-          ? Math.round(totalProducts * discountValue) / 100
-          : discountValue;
       const commissionRate = owner ? Number(owner.commission_rate) : null;
-      const commissionAmount =
-        commissionRate !== null
-          ? Math.round((totalProducts - orderDiscount) * commissionRate) / 100
-          : null;
+      let commissionAmount = null;
+      if (commissionRate !== null) commissionAmount = this.commissionAmount(order, commissionRate);
 
       return this.repository.create(
         {
@@ -78,6 +73,36 @@ export class OrderCouponService extends BaseService<OrderCoupon, OrderCouponRepo
     // Bumpa updated_at pros jobs incrementais dos relatórios reprocessarem o pedido.
     if (created) await orderService.touch(orderId);
     return created;
+  }
+
+  // Pedido editado na Bling: refaz o valor da comissão com o total atual, mantendo dono e taxa congelados.
+  async syncCommissionWithOrder(orderId: string): Promise<void> {
+    const affiliated = await this.repository.findAffiliatedByOrder(orderId);
+    if (!affiliated || affiliated.commission_rate == null) return;
+
+    const order = await orderService.findById(orderId, {
+      attributes: ["id", "total_products", "discount_value", "discount_type"],
+    });
+    if (!order) return;
+
+    const amount = this.commissionAmount(order, Number(affiliated.commission_rate));
+    if (amount === Number(affiliated.commission_amount)) return;
+    await this.repository.updateCommissionAmount(orderId, affiliated.coupon_id, amount);
+  }
+
+  // Base = produtos − desconto do pedido (mesma base da comissão do vendedor); em centavos inteiros pra arredondar como o SQL.
+  private commissionAmount(
+    order: { total_products?: number | string | null; discount_value?: number | string | null; discount_type?: string | null },
+    commissionRate: number,
+  ): number {
+    const totalCents = Math.round(Number(order.total_products ?? 0) * 100);
+    const discountValue = Number(order.discount_value ?? 0);
+    // % com 2 casas vira inteiro (×100): produto de inteiros é exato, só a divisão final arredonda.
+    let discountCents = Math.round(discountValue * 100);
+    if (order.discount_type === ORDER_DISCOUNT_TYPE_PERCENT) {
+      discountCents = Math.round((totalCents * Math.round(discountValue * 100)) / 10000);
+    }
+    return Math.round(((totalCents - discountCents) * Math.round(commissionRate * 100)) / 10000) / 100;
   }
 }
 
