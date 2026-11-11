@@ -46,6 +46,9 @@ export const AFFILIATED_USER_TYPE: UserType = "affiliated";
 // Seller user type (seller report view); also created via contacts /with-user.
 export const SELLER_USER_TYPE: UserType = "seller";
 
+// Store manager user type (seller report, managerial view of the store).
+export const MANAGER_USER_TYPE: UserType = "manager";
+
 export const USER_TYPES: USER_TYPE_CONFIG[] = [
   {
     type: ADMIN_USER_TYPE,
@@ -222,7 +225,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
     ],
   },
   {
-    type: "manager",
+    type: MANAGER_USER_TYPE,
     label: "Gerente",
     description: "Acesso ao relatório de vendedores - visão gerencial.",
     initialPage: "sellers-manager-report",

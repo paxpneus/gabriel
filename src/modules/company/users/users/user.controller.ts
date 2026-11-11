@@ -101,7 +101,8 @@ export class UserController extends BaseController<User, typeof UserService> {
       });
       return res.json({ user });
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      // 429 = login travado por excesso de tentativas (verifyCredentials).
+      return res.status(error.status ?? 400).json({ error: error.message });
     }
   };
 

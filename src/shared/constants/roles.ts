@@ -91,6 +91,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
       { entity: 'order_items',   label: 'Itens do Pedido' },
       { entity: 'order_history', label: 'Histórico' },
       { entity: 'customers',     label: 'Clientes' },
+      { entity: 'stores',        label: 'Canais de venda' },
       { entity: 'steps',         label: 'Etapas' },
     ],
   },

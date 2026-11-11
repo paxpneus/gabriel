@@ -42,7 +42,7 @@ class SellerController extends RouterController {
     this.router.put(`/:id/with-user`, ...this.mw("updateWithUser"), this.updateWithUser);
   }
 
-  // create-from-seller-name segue sem middleware (como antes da separação).
+  // create-from-seller-name segue sem middleware: a rota só responde 410 (inativada).
   protected middlewaresFor() {
     return {
       show: [authenticate, userPermissions],
@@ -52,15 +52,10 @@ class SellerController extends RouterController {
     };
   }
 
-  createUserFromSellerName = async (req: Request, res: Response): Promise<Response> => {
-    try {
-      const { name, unitBusinessNumber, email, password } = req.body;
-      const record = await sellerService.createUserFromSellerName(name, unitBusinessNumber, email, password);
-      return res.status(201).json(record);
-    } catch (error: any) {
-      return res.status(400).json({ error: error.message });
-    }
-  };
+  // Rota pública inativada: qualquer um que soubesse o nome de um vendedor criava a conta dele e saía logado.
+  // A lógica (sellerService.createUserFromSellerName) fica; usuário de vendedor é criado pelo POST /with-user.
+  createUserFromSellerName = async (_req: Request, res: Response): Promise<Response> =>
+    res.status(410).json({ error: "Cadastro de vendedor por nome desativado. Peça ao administrador para criar seu acesso." });
 
   /** POST /with-user — cria User + Contact pra tipo com login (afiliado, vendedor). */
   createWithUser = async (req: Request, res: Response): Promise<Response> => {

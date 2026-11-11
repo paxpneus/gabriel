@@ -11,10 +11,11 @@ class StoreController extends BaseController<Store, StoreService> {
 
   protected middlewaresFor() {
     return {
-      index: [authenticate, userPermissions],
+      // Leitura só com login (lista de canais usada em várias telas); escrita exige Pedidos ("Canais de venda" herda do pai).
+      index: [authenticate],
       create: [authenticate, userPermissions],
       update: [authenticate, userPermissions],
-      show: [authenticate, userPermissions],
+      show: [authenticate],
       destroy: [authenticate, userPermissions],
       // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
       bulkCreate: [authenticate, userPermissions],

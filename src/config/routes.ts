@@ -10,10 +10,10 @@ export const ROUTE_TO_TABLE: Record<string, string> = {};
 
 // Rotas que não precisam de verificação de permissão
 // integration-mapping saiu daqui: troca de principal/CRUD de mapping exige a permissão de Produtos (filho integration_mappings).
+// "stores" saiu daqui: escrita de canal de venda exige permissão de Pedidos (filho "Canais de venda" herda do pai); leitura segue só com login no controller.
 const EXCLUDED_ROUTES = new Set([
   "bling",
   "bling-orders",
-  "stores",
   "mercado_livre",
 ]);
 
@@ -90,6 +90,12 @@ const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "seller-commission-report": "financial-pdt",
   "integration-problems-report": "financial-pdt",
   "sale-transfer-invoice-report": "invoices",
+  // Rotas sem model (resolveriam null = liberadas pra qualquer logado): mapeadas pra permissão existente.
+  "/api/bling-api-fetch": "integrations",
+  "/api/tecinco/sync": "integrations",
+  "/api/invoice-maintenance": "invoices",
+  "/api/invoice-logistic-occurrences": "invoices",
+  "/api/printer": "printer_configs",
   "multiplier-scan-inventory": "multiply-stk-inventory",
   "multiplier-scan-entrance": "multiply-stk-entrance",
    "all-unit-business": "visualize-all-unit-business",

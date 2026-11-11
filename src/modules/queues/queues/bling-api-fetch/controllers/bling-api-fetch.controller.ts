@@ -1,6 +1,7 @@
 import { QueuesController } from './../../../controller/queue.controller';
 import { Request, Response } from "express";
 import { authenticate } from "../../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../../middlewares/user-permissions";
 import blingApiFetchService from '../services/bling-api-fetch.service';
 
 const BLING_API_FETCH_QUEUE = "BLING_API_FETCH";
@@ -12,12 +13,12 @@ export class BlingApiFetchController extends QueuesController {
 
   protected middlewaresFor() {
     return {
-      overview: [authenticate],
-      jobs: [authenticate],
-      retry: [authenticate],
-      remove: [authenticate],
-      pause: [authenticate],
-      resume: [authenticate],
+      overview: [authenticate, userPermissions],
+      jobs: [authenticate, userPermissions],
+      retry: [authenticate, userPermissions],
+      remove: [authenticate, userPermissions],
+      pause: [authenticate, userPermissions],
+      resume: [authenticate, userPermissions],
     };
   }
 

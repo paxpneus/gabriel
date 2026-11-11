@@ -40,19 +40,19 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
    protected middlewaresFor() {
         return {
           index: [authenticate],
-          create: [authenticate],
+          create: [authenticate, userPermissions],
           update: [
             authenticate
           ],
           show: [authenticate],
-          destroy: [authenticate],
+          destroy: [authenticate, userPermissions],
           login: [authenticate],
           // userPermissions resolve a entidade invoice_product_mapping pela rota (CUSTOM_ROUTE_MAP "invoice-items/add/item").
           createInvoiceItem: [authenticate, userPermissions],
           // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
-          bulkCreate: [authenticate],
-          bulkUpdate: [authenticate],
-          bulkDestroy: [authenticate],
+          bulkCreate: [authenticate, userPermissions],
+          bulkUpdate: [authenticate, userPermissions],
+          bulkDestroy: [authenticate, userPermissions],
         };
       }
 

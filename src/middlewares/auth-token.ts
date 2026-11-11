@@ -9,6 +9,7 @@ import {
 } from "../modules/integrations/applications/applications.types";
 import { enforceApplicationRateLimit } from "./application-rate-limit";
 import { ROLE_PERMISSIONS } from "../shared/constants/roles";
+import userService from "../modules/company/users/users/user.service";
 
 export interface AuthRequest extends Request {
   user?: {
@@ -185,6 +186,7 @@ export async function authenticate(
       role: string;
       type?: string;
       tokenVersion?: number;
+      iat?: number;
     };
 
     if (payload.type === "application") {
@@ -212,6 +214,13 @@ export async function authenticate(
       }
 
       return authorizeApplication(req, res, next, application);
+    }
+
+    // JWT válido não basta: usuário desativado ou token anterior à troca de senha caem aqui.
+    try {
+      await userService.assertActiveSession(payload.id, payload.iat);
+    } catch (error: any) {
+      return res.status(401).json({ error: error.message });
     }
 
     req.user = payload;

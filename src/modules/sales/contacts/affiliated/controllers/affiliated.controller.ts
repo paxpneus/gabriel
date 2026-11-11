@@ -35,7 +35,8 @@ class AffiliatedController extends RouterController {
       });
       return res.json({ user: profile });
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      // 429 = login travado por excesso de tentativas (verifyCredentials).
+      return res.status(error.status ?? 400).json({ error: error.message });
     }
   };
 
