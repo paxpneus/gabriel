@@ -32,6 +32,7 @@ import {
   buildTransferInvoiceQueryOptions,
   invoiceAttributesRepository,
   mapListedInvoice,
+  withUnitBusinessNames,
   notInternalInvoiceWhere,
   totalExpectedLiteral,
   totalReadLiteral,
@@ -209,10 +210,11 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     unitBusinessId: string | undefined,
     queryConfig: QueryConfig = {},
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
-    const [unitBusinessCnpjs, internalOperationId] = await Promise.all([
-      invoiceAttributesRepository.findAllUnitBusinessCnpjs(),
+    const [unitBusinessNames, internalOperationId] = await Promise.all([
+      invoiceAttributesRepository.findUnitBusinessNamesByCnpj(),
       invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER),
     ]);
+    const unitBusinessCnpjs = [...unitBusinessNames.keys()];
 
     const { extraOptions, forcedWhere } = buildTransferInvoiceQueryOptions(
       params,
@@ -229,7 +231,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
     return {
       ...result,
-      data: result.data.map((invoice) => mapListedInvoice(invoice)),
+      data: withUnitBusinessNames(result.data.map((invoice) => mapListedInvoice(invoice)), unitBusinessNames),
     };
   }
 

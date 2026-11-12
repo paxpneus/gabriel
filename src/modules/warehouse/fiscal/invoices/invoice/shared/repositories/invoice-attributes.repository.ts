@@ -108,6 +108,22 @@ export class InvoiceAttributesRepository extends BaseRepository<Invoice> {
     return rows.map((r) => (r as any).cnpj).filter((cnpj): cnpj is string => !!cnpj);
   }
 
+  // Mapa CNPJ → nome da loja (ex.: "Loja 01 - Assis"), numa query só, pras colunas de loja das listagens de transferência/interna.
+  async findUnitBusinessNamesByCnpj(): Promise<Map<string, string>> {
+    const rows = (await UnitBusiness.findAll({
+      attributes: ["cnpj", "name"],
+      where: { cnpj: { [Op.ne]: null } } as WhereOptions,
+      raw: true,
+    })) as unknown as { cnpj: string; name: string }[];
+    return new Map(rows.map((r) => [r.cnpj, r.name]));
+  }
+
+  // CNPJ da loja pelo id (null se não cadastrado); escopa a listagem de nota interna pela loja do usuário.
+  async findUnitBusinessCnpjById(unitBusinessId: string): Promise<string | null> {
+    const row = await UnitBusiness.findByPk(unitBusinessId, { attributes: ["cnpj"], raw: true });
+    return (row as { cnpj?: string | null } | null)?.cnpj ?? null;
+  }
+
   async findUnitBusinessesByCnpj(
     cnpjs: string[],
     transaction?: Transaction,

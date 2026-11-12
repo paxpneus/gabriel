@@ -31,6 +31,21 @@ export class ExpeditionBatchController extends BaseController<
     return "unit_business_id";
   }
 
+  // GET /expedition-batches: lote interno (filters[is_internal]=true) só da loja do usuário logado (emitiu ou recebeu); application segue sem escopo.
+  index = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      let forcedWhere = await this.storeNumberWhere(req);
+      if (String(params.filters?.is_internal) === "true" && getRequestUserId(req)) {
+        const { unitBusinessId } = await getUserContext(req);
+        forcedWhere = { ...forcedWhere, unit_business_id: unitBusinessId };
+      }
+      return res.json(await this.service.paginate(params, undefined, forcedWhere));
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
   protected middlewaresFor() {
     return {
       index: [authenticate, userPermissions],

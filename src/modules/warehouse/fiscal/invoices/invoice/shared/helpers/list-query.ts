@@ -392,3 +392,15 @@ export function mapListedInvoice(invoice: Invoice): FullInvoiceAttributes {
       : plain.transporter,
   } as unknown as FullInvoiceAttributes;
 }
+
+// Anexa o nome da loja de cada ponta (null quando o CNPJ não é de loja cadastrada); usado nas 3 listagens de transferência/interna.
+export function withUnitBusinessNames(
+  invoices: FullInvoiceAttributes[],
+  nameByCnpj: Map<string, string>,
+): FullInvoiceAttributes[] {
+  return invoices.map((invoice) => ({
+    ...invoice,
+    sender_unit_business_name: nameByCnpj.get(invoice.sender_cnpj) ?? null,
+    receiver_unit_business_name: nameByCnpj.get(invoice.receiver_cnpj) ?? null,
+  }));
+}

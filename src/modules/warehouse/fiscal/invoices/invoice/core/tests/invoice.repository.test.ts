@@ -22,7 +22,7 @@ jest.mock("../../shared", () => ({
   ...jest.requireActual("../../shared/helpers/batch-invoice-scope"),
   ...jest.requireActual("../../shared/helpers/totals"),
   ...jest.requireActual("../../shared/helpers/nfe-ide"),
-  invoiceAttributesRepository: { findAllUnitBusinessCnpjs: jest.fn().mockResolvedValue(["12", "24"]) },
+  invoiceAttributesRepository: { findUnitBusinessNamesByCnpj: jest.fn().mockResolvedValue(new Map([["12", "Loja 01 - A"], ["24", "Loja 02 - B"]])) },
 }));
 
 jest.mock("../../../invoice-operation/invoice-operation.repository", () => ({

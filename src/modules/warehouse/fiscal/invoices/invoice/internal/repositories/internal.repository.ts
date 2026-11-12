@@ -3,7 +3,7 @@ import BaseRepository from "../../../../../../../shared/utils/base-models/base-r
 import Invoice from "../../invoice.model";
 import { FullInvoiceAttributes, InvoiceAttributes } from "../../invoice.types";
 import { PaginatedResult, QueryConfig, QueryParams } from "../../../../../../../shared/query/query.types";
-import { buildTransferInvoiceQueryOptions, mapListedInvoice } from "../../shared";
+import { buildTransferInvoiceQueryOptions, invoiceAttributesRepository, mapListedInvoice, withUnitBusinessNames } from "../../shared";
 import InvoiceUnitBusinessAttributes from "../../../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import UnitBusiness from "../../../../../../company/unit-business/unit-business.model";
 
@@ -19,20 +19,27 @@ export class InternalInvoiceRepository extends BaseRepository<Invoice> {
   // GET /internal/list: mesmos filtros e projeção da listagem de transferência, só a operação interna.
   async listInternalInvoices(
     params: QueryParams,
-    unitBusinessId: string | undefined,
+    unitBusinessId: string,
     operationId: string,
     queryConfig: QueryConfig = {},
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
     const { extraOptions, forcedWhere } = buildTransferInvoiceQueryOptions(params, unitBusinessId);
 
+    const [unitBusinessNames, storeCnpj] = await Promise.all([
+      invoiceAttributesRepository.findUnitBusinessNamesByCnpj(),
+      invoiceAttributesRepository.findUnitBusinessCnpjById(unitBusinessId),
+    ]);
+
+    // Só nota que a loja do usuário emitiu ou recebeu; loja sem CNPJ não vê nenhuma.
     const result = await this.findPaginated(params, queryConfig, extraOptions, {
       ...forcedWhere,
       invoice_operation_id: operationId,
+      [Op.or]: [{ sender_cnpj: storeCnpj ?? "" }, { receiver_cnpj: storeCnpj ?? "" }],
     });
 
     return {
       ...result,
-      data: result.data.map((invoice) => mapListedInvoice(invoice)),
+      data: withUnitBusinessNames(result.data.map((invoice) => mapListedInvoice(invoice)), unitBusinessNames),
     };
   }
 

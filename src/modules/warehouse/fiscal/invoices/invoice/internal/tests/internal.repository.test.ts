@@ -22,7 +22,7 @@ jest.mock("../../shared", () => ({
   ...jest.requireActual("../../shared/helpers/batch-invoice-scope"),
   ...jest.requireActual("../../shared/helpers/totals"),
   ...jest.requireActual("../../shared/helpers/nfe-ide"),
-  invoiceAttributesRepository: { findAllUnitBusinessCnpjs: jest.fn().mockResolvedValue(["12", "24"]) },
+  invoiceAttributesRepository: { findUnitBusinessCnpjById: jest.fn().mockResolvedValue("24"), findUnitBusinessNamesByCnpj: jest.fn().mockResolvedValue(new Map([["12", "Loja 01 - A"], ["24", "Loja 02 - B"]])) },
 }));
 
 jest.mock("../../../invoice-operation/invoice-operation.repository", () => ({
@@ -30,10 +30,11 @@ jest.mock("../../../invoice-operation/invoice-operation.repository", () => ({
   default: { findIdByCode: jest.fn() },
 }));
 
+import { Op } from "sequelize";
 import internalInvoiceRepository from "../repositories/internal.repository";
 
 describe("InternalInvoiceRepository.listInternalInvoices", () => {
-  it("só a operação interna, sem recorte de CNPJ, com a projeção da transferência", async () => {
+  it("só a operação interna emitida/recebida pela loja do usuário, com a projeção da transferência", async () => {
     const findPaginated = jest
       .spyOn(internalInvoiceRepository, "findPaginated")
       .mockResolvedValue({ data: [], meta: { total: 0 } } as any);
@@ -42,7 +43,10 @@ describe("InternalInvoiceRepository.listInternalInvoices", () => {
 
     expect(result).toEqual({ data: [], meta: { total: 0 } });
     const [, , extraOptions, forcedWhere] = findPaginated.mock.calls[0];
-    expect(forcedWhere).toEqual({ invoice_operation_id: "op-internal" });
+    expect(forcedWhere).toEqual({
+      invoice_operation_id: "op-internal",
+      [Op.or]: [{ sender_cnpj: "24" }, { receiver_cnpj: "24" }],
+    });
     // Projeção da transferência: exclui XML/payload e traz o vínculo de lote.
     expect((extraOptions as any).attributes.exclude).toEqual(["source_payload", "xml_path", "observation"]);
   });

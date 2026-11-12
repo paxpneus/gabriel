@@ -26,6 +26,9 @@ import ExpeditionBatch from "../../../../../expedition/batch/batch.model";
 import batchItemsService from "../../../../../expedition/batch-items/batch-items.service";
 import batchInvoiceItemsService from "../../../../../expedition/batch-invoice-items/batch-invoice-items.service";
 import scanLogsService from "../../../../../expedition/scan-logs/scan-logs.service";
+import batchInvoicesService from "../../../../../expedition/batch-invoices/batch-invoices.service";
+import userConfigService from "../../../../../../company/users/user_config/user_config.service";
+import { FULL_ACCESS_USER_TYPES } from "../../../../../../../shared/constants/user-types";
 import productService from "../../../../../../inventory/products/services/product.service";
 import { buildInternalInvoiceIdSystem } from "../helpers/internal-invoice-id";
 import { buildInternalInvoiceItems } from "../helpers/internal-fiscal-items";
@@ -57,10 +60,10 @@ export class InternalInvoiceService extends BaseService<Invoice, InternalInvoice
     this.queryConfig = invoiceQueryConfig;
   }
 
-  // Listagem paginada das notas internas; sem unitBusinessId lista de todas as lojas (igual à de transferência).
+  // Listagem paginada das notas internas da loja (emitidas ou recebidas por ela).
   async listInternalInvoices(
     params: QueryParams,
-    unitBusinessId?: string,
+    unitBusinessId: string,
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
     const operationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
     if (!operationId) {
@@ -291,6 +294,73 @@ export class InternalInvoiceService extends BaseService<Invoice, InternalInvoice
           scanLogsService.syncFromScanning(batchId, batchItem.id, batchInvoiceId, delta, t),
         ),
       );
+      return true as const;
+    });
+  }
+
+  // Edita a quantidade lida de um produto numa nota do lote interno (delta com sinal, sem scan log), só admin/developer; mesma regra do by-invoice dos lotes atuais.
+  async adjustInternalBatchQuantity(params: {
+    batchId: string;
+    invoiceId: string;
+    productId: string;
+    quantity: number;
+    userId: string;
+    type: "OUTGOING" | "INCOMING";
+  }): Promise<true> {
+    const { batchId, invoiceId, productId, userId, type } = params;
+    const quantity = Number(params.quantity);
+    if (!Number.isInteger(quantity) || quantity === 0) throw new Error("Quantidade inválida");
+    if (!batchId || !invoiceId || !productId) throw new Error("Informe lote, nota e produto");
+
+    const config = await userConfigService.findOne({ where: { user_id: userId }, attributes: ["type"] });
+    if (!config || !FULL_ACCESS_USER_TYPES.includes(config.type)) {
+      throw new Error("Apenas administradores podem executar esta ação");
+    }
+
+    return sequelize.transaction(async (t) => {
+      const batch = await expeditionBatchService.findById(batchId, {
+        attributes: ["id", "type", "status", "is_internal"],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!batch) throw new Error("Lote não encontrado");
+      if (!batch.is_internal) throw new Error("Lote não é de nota interna");
+      if (batch.type !== type) throw new Error(`Lote não é de ${type === "OUTGOING" ? "saída" : "entrada"}`);
+      if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
+
+      const batchItem = await batchItemsService.findOne({
+        where: { expedition_batch_id: batchId, product_id: productId },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!batchItem) throw new Error("Produto não está nas notas deste lote");
+
+      const batchInvoice = await batchInvoicesService.findOne({
+        where: { expedition_batch_id: batchId, invoice_id: invoiceId },
+        attributes: ["id"],
+        transaction: t,
+      });
+      if (!batchInvoice) throw new Error("Nota não encontrada no lote");
+
+      const invoiceItem = await batchInvoiceItemsService.findOne({
+        where: { expedition_batch_item_id: batchItem.id, expedition_batch_invoice_id: batchInvoice.id },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!invoiceItem) throw new Error("Nota não contém este produto");
+
+      // Limite por nota: nunca abaixo de zero; saída também não passa do esperado (entrada aceita sobra, como o scan).
+      const next = Number(invoiceItem.quantity_read) + quantity;
+      if (next < 0) {
+        throw new Error(`Quantidade a subtrair (${Math.abs(quantity)}) maior que o já bipado (${invoiceItem.quantity_read})`);
+      }
+      if (type === "OUTGOING" && next > Number(invoiceItem.quantity_expected)) {
+        throw new Error(
+          `Quantidade informada (${quantity}) excede o restante a bipar (${Number(invoiceItem.quantity_expected) - Number(invoiceItem.quantity_read)})`,
+        );
+      }
+
+      await scanLogsService.syncFromScanning(batchId, batchItem.id, batchInvoice.id, quantity, t);
       return true as const;
     });
   }

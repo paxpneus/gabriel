@@ -57,7 +57,15 @@ jest.mock("../../../../../expedition/batch-items/batch-items.service", () => ({
 }));
 jest.mock("../../../../../expedition/batch-invoice-items/batch-invoice-items.service", () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), findPendingByBatchItemId: jest.fn() },
+  default: { findAll: jest.fn(), findOne: jest.fn(), findPendingByBatchItemId: jest.fn() },
+}));
+jest.mock("../../../../../expedition/batch-invoices/batch-invoices.service", () => ({
+  __esModule: true,
+  default: { findOne: jest.fn() },
+}));
+jest.mock("../../../../../../company/users/user_config/user_config.service", () => ({
+  __esModule: true,
+  default: { findOne: jest.fn() },
 }));
 jest.mock("../../../../../expedition/scan-logs/scan-logs.service", () => ({
   __esModule: true,
@@ -73,6 +81,8 @@ import expeditionBatchService from "../../../../../expedition/batch/batch.servic
 import batchItemsService from "../../../../../expedition/batch-items/batch-items.service";
 import batchInvoiceItemsService from "../../../../../expedition/batch-invoice-items/batch-invoice-items.service";
 import scanLogsService from "../../../../../expedition/scan-logs/scan-logs.service";
+import batchInvoicesService from "../../../../../expedition/batch-invoices/batch-invoices.service";
+import userConfigService from "../../../../../../company/users/user_config/user_config.service";
 import productService from "../../../../../../inventory/products/services/product.service";
 import internalInvoiceRepository from "../repositories/internal.repository";
 import invoiceOperationRepository from "../../../invoice-operation/invoice-operation.repository";
@@ -289,9 +299,9 @@ describe("InternalInvoiceService.listInternalInvoices", () => {
     operations.findIdByCode.mockResolvedValue("op-internal");
     repository.listInternalInvoices.mockResolvedValue({ data: [], meta: {} } as any);
 
-    await internalInvoiceService.listInternalInvoices({ page: 1 } as any, undefined);
+    await internalInvoiceService.listInternalInvoices({ page: 1 } as any, "ub-24");
 
-    expect(repository.listInternalInvoices).toHaveBeenCalledWith({ page: 1 }, undefined, "op-internal", {
+    expect(repository.listInternalInvoices).toHaveBeenCalledWith({ page: 1 }, "ub-24", "op-internal", {
       filterableFields: ["invoice_operation_id"],
     });
   });
@@ -299,7 +309,7 @@ describe("InternalInvoiceService.listInternalInvoices", () => {
   it("sem a operação cadastrada responde erro em vez de listar outra coisa", async () => {
     operations.findIdByCode.mockResolvedValue(null);
 
-    await expect(internalInvoiceService.listInternalInvoices({} as any)).rejects.toThrow("seed da m351");
+    await expect(internalInvoiceService.listInternalInvoices({} as any, "ub-24")).rejects.toThrow("seed da m351");
     expect(repository.listInternalInvoices).not.toHaveBeenCalled();
   });
 });
@@ -414,5 +424,75 @@ describe("InternalInvoiceService — lote da nota interna", () => {
     await expect(internalInvoiceService.findInternalBatchPending("item-1")).resolves.toEqual([
       { productName: "PNEU 185/60R15", invoiceNumberSystem: "882", pendingQuantity: 3 },
     ]);
+  });
+});
+
+describe("InternalInvoiceService.adjustInternalBatchQuantity", () => {
+  const findBatch = expeditionBatchService.findById as jest.Mock;
+  const findItem = batchItemsService.findOne as jest.Mock;
+  const findBatchInvoice = batchInvoicesService.findOne as jest.Mock;
+  const findInvoiceItem = batchInvoiceItemsService.findOne as jest.Mock;
+  const findConfig = userConfigService.findOne as jest.Mock;
+  const sync = scanLogsService.syncFromScanning as jest.Mock;
+
+  // Lote interno de saída aberto; a nota tem 4 esperados e 3 lidos do produto.
+  function arrange(batch: Record<string, unknown> = {}, userType = "admin") {
+    findConfig.mockResolvedValue({ type: userType });
+    findBatch.mockResolvedValue({ id: "batch-1", type: "OUTGOING", status: "OPEN", is_internal: true, ...batch });
+    findItem.mockResolvedValue({ id: "item-1" });
+    findBatchInvoice.mockResolvedValue({ id: "bi-1" });
+    findInvoiceItem.mockResolvedValue({ quantity_expected: 4, quantity_read: 3 });
+  }
+  const call = (quantity: number, type: "OUTGOING" | "INCOMING" = "OUTGOING") =>
+    internalInvoiceService.adjustInternalBatchQuantity({ batchId: "batch-1", invoiceId: "inv-1", productId: "p-1", quantity, userId: "u-1", type });
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each(["admin", "developer"])("%s ajusta a quantidade lida da nota sem criar scan log", async (userType) => {
+    arrange({}, userType);
+
+    await call(-2);
+
+    expect(sync).toHaveBeenCalledWith("batch-1", "item-1", "bi-1", -2, expect.anything());
+  });
+
+  it("outro tipo de usuário é recusado", async () => {
+    arrange({}, "operator");
+
+    await expect(call(1)).rejects.toThrow("Apenas administradores");
+    expect(sync).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 1.5])("quantidade %s é inválida", async (quantity) => {
+    arrange();
+
+    await expect(call(quantity)).rejects.toThrow("Quantidade inválida");
+  });
+
+  it("não deixa a nota abaixo de zero", async () => {
+    arrange();
+
+    await expect(call(-4)).rejects.toThrow("maior que o já bipado (3)");
+    expect(sync).not.toHaveBeenCalled();
+  });
+
+  it("saída não passa do esperado da nota; entrada aceita sobra", async () => {
+    arrange();
+    await expect(call(2)).rejects.toThrow("excede o restante a bipar (1)");
+
+    arrange({ type: "INCOMING" });
+    await call(5, "INCOMING");
+    expect(sync).toHaveBeenCalledWith("batch-1", "item-1", "bi-1", 5, expect.anything());
+  });
+
+  it.each([
+    ["lote de NF-e", { is_internal: false }, "Lote não é de nota interna"],
+    ["tipo errado", { type: "INCOMING" }, "Lote não é de saída"],
+    ["lote finalizado", { status: "FINISHED" }, "Lote já finalizado"],
+  ])("recusa %s", async (_label, batch, message) => {
+    arrange(batch);
+
+    await expect(call(1)).rejects.toThrow(message);
+    expect(sync).not.toHaveBeenCalled();
   });
 });

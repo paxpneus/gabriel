@@ -9,6 +9,7 @@ import KitComponent from "../../../../../../inventory/kit-components/kit-compone
 import {
   buildTransferInvoiceQueryOptions,
   mapListedInvoice,
+  withUnitBusinessNames,
   invoiceAttributesRepository,
   notInternalInvoiceWhere,
 } from "../../shared";
@@ -89,11 +90,12 @@ export class InvoiceReportsRepository extends BaseRepository<Invoice> {
     unitBusinessId: string | undefined,
     queryConfig: QueryConfig = {},
   ): Promise<FullInvoiceAttributes[]> {
-    const [unitBusinessCnpjs, internalOperationId] = await Promise.all([
-      invoiceAttributesRepository.findAllUnitBusinessCnpjs(),
+    const [unitBusinessNames, internalOperationId] = await Promise.all([
+      invoiceAttributesRepository.findUnitBusinessNamesByCnpj(),
       invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER),
     ]);
 
+    const unitBusinessCnpjs = [...unitBusinessNames.keys()];
     const { extraOptions, forcedWhere } = buildTransferInvoiceQueryOptions(
       params,
       unitBusinessId,
@@ -118,7 +120,7 @@ export class InvoiceReportsRepository extends BaseRepository<Invoice> {
       order: resolved.order,
     });
 
-    return rows.map((invoice) => mapListedInvoice(invoice));
+    return withUnitBusinessNames(rows.map((invoice) => mapListedInvoice(invoice)), unitBusinessNames);
   }
 }
 

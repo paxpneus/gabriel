@@ -700,6 +700,7 @@ export class DailyOperationReportRepository {
           WHERE DATE(esl.created_at) = CAST(:factDate AS date)
             AND eb.unit_business_id = :unitBusinessId
             AND eb.type = 'INCOMING'
+            AND eb.is_internal = FALSE
             AND ebi.is_transshipment IS NOT TRUE
             AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
         ),
@@ -713,6 +714,7 @@ export class DailyOperationReportRepository {
           WHERE DATE(esl.created_at) = CAST(:factDate AS date)
             AND eb.unit_business_id = :unitBusinessId
             AND eb.type = 'OUTGOING'
+            AND eb.is_internal = FALSE
             AND ebi.is_transshipment IS NOT TRUE
             AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
         )
@@ -939,6 +941,7 @@ export class DailyOperationReportRepository {
             AND eb.unit_business_id = :unitBusinessId
             AND eb.transporters_id = :transporterId
             AND eb.type = 'OUTGOING'
+            AND eb.is_internal = FALSE
             AND ebi.is_transshipment IS NOT TRUE
             AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
         ),
@@ -1106,12 +1109,144 @@ export class DailyOperationReportRepository {
         )
       : undefined;
 
+    const internal = await this.getInternalReport(filters);
+
     return {
       date: filters.date,
       facts,
       transporters,
+      internal,
       ...(snapshots ? { snapshots } : {}),
     };
+  }
+
+  // Notas internas do dia (fora dos snapshots): listagem + total, recebido e expedido por loja (notas e volumes bipados nos lotes internos).
+  private async getInternalReport(filters: DailyOperationReportFilters) {
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
+    if (!internalOperationId) return { facts: [], invoices: [] };
+
+    const replacements = {
+      date: filters.date,
+      unitBusinessId: filters.unitBusinessId ?? null,
+      internalOperationId,
+    };
+
+    const invoices = await sequelize.query<{
+      invoice_id: string;
+      number_system: string;
+      invoice_series: string | null;
+      unit_business_id: string;
+      unit_business_name: string;
+      sender_unit_business_name: string | null;
+      receiver_unit_business_name: string | null;
+      type: "INCOMING" | "OUTGOING";
+      status: string;
+      emitted_at: Date | null;
+      total_items_expected: number;
+      total_items_received: number;
+    }>(
+      `
+      SELECT
+        i.id AS invoice_id,
+        i.number_system,
+        i.invoice_series,
+        iuba.unit_business_id,
+        ub.name AS unit_business_name,
+        -- Loja emissora e destinatária pelo CNPJ da nota (mesma regra da listagem de notas internas).
+        sub.name AS sender_unit_business_name,
+        rub.name AS receiver_unit_business_name,
+        iuba.type,
+        iuba.status,
+        i.emitted_at,
+        COALESCE((SELECT SUM(ii.quantity_expected) FROM invoice_items ii WHERE ii.invoice_id = i.id), 0)::integer AS total_items_expected,
+        COALESCE((
+          SELECT SUM(bii.quantity_read)
+          FROM expedition_batch_invoices ebi
+          JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
+          JOIN batch_invoice_items bii ON bii.expedition_batch_invoice_id = ebi.id
+          WHERE ebi.invoice_id = i.id
+            AND eb.is_internal = TRUE
+            AND eb.unit_business_id = iuba.unit_business_id
+            AND eb.type::text = iuba.type::text
+        ), 0)::integer AS total_items_received
+      FROM invoices i
+      JOIN invoice_unit_business_attributes iuba ON iuba.invoice_id = i.id
+      JOIN unit_businesses ub ON ub.id = iuba.unit_business_id
+      LEFT JOIN unit_businesses sub ON sub.cnpj = i.sender_cnpj
+      LEFT JOIN unit_businesses rub ON rub.cnpj = i.receiver_cnpj
+      WHERE i.invoice_operation_id = :internalOperationId
+        AND DATE(i.created_at) = CAST(:date AS date)
+        AND (CAST(:unitBusinessId AS uuid) IS NULL OR iuba.unit_business_id = CAST(:unitBusinessId AS uuid))
+      ORDER BY ub.name ASC, i.number_system ASC
+      `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    // Volume = 1 scan log por unidade bipada, só de lote interno.
+    const volumes = await sequelize.query<{
+      unit_business_id: string;
+      unit_business_name: string;
+      type: "INCOMING" | "OUTGOING";
+      total: number;
+    }>(
+      `
+      SELECT eb.unit_business_id, ub.name AS unit_business_name, eb.type, COUNT(*)::integer AS total
+      FROM expedition_scan_logs esl
+      JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
+      JOIN unit_businesses ub ON ub.id = eb.unit_business_id
+      WHERE eb.is_internal = TRUE
+        AND DATE(esl.created_at) = CAST(:date AS date)
+        AND (CAST(:unitBusinessId AS uuid) IS NULL OR eb.unit_business_id = CAST(:unitBusinessId AS uuid))
+      GROUP BY eb.unit_business_id, ub.name, eb.type
+      `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    const byUnit = new Map<
+      string,
+      {
+        unit_business_id: string;
+        unit_business_name: string;
+        incoming_count: number;
+        outgoing_count: number;
+        total_count: number;
+        volumes_received: number;
+        volumes_dispatched: number;
+      }
+    >();
+    const unitRow = (unit_business_id: string, unit_business_name: string) => {
+      let row = byUnit.get(unit_business_id);
+      if (!row) {
+        row = {
+          unit_business_id,
+          unit_business_name,
+          incoming_count: 0,
+          outgoing_count: 0,
+          total_count: 0,
+          volumes_received: 0,
+          volumes_dispatched: 0,
+        };
+        byUnit.set(unit_business_id, row);
+      }
+      return row;
+    };
+
+    // Canceladas aparecem na listagem mas não entram nos totais.
+    for (const inv of invoices) {
+      if (inv.status === "CANCELLED") continue;
+      const row = unitRow(inv.unit_business_id, inv.unit_business_name);
+      if (inv.type === "INCOMING") row.incoming_count += 1;
+      else row.outgoing_count += 1;
+      row.total_count += 1;
+    }
+    for (const vol of volumes) {
+      const row = unitRow(vol.unit_business_id, vol.unit_business_name);
+      if (vol.type === "INCOMING") row.volumes_received += Number(vol.total);
+      else row.volumes_dispatched += Number(vol.total);
+    }
+
+    const facts = [...byUnit.values()].sort((a, b) => a.unit_business_name.localeCompare(b.unit_business_name));
+    return { facts, invoices };
   }
 }
 
