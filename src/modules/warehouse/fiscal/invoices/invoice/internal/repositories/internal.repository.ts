@@ -1,7 +1,9 @@
 import { Op } from "sequelize";
 import BaseRepository from "../../../../../../../shared/utils/base-models/base-repository";
 import Invoice from "../../invoice.model";
-import { InvoiceAttributes } from "../../invoice.types";
+import { FullInvoiceAttributes, InvoiceAttributes } from "../../invoice.types";
+import { PaginatedResult, QueryConfig, QueryParams } from "../../../../../../../shared/query/query.types";
+import { buildTransferInvoiceQueryOptions, mapListedInvoice } from "../../shared";
 import InvoiceUnitBusinessAttributes from "../../../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import UnitBusiness from "../../../../../../company/unit-business/unit-business.model";
 
@@ -12,6 +14,26 @@ export type InternalInvoiceBranchSide = "E" | "S";
 export class InternalInvoiceRepository extends BaseRepository<Invoice> {
   constructor() {
     super(Invoice);
+  }
+
+  // GET /internal/list: mesmos filtros e projeção da listagem de transferência, só a operação interna.
+  async listInternalInvoices(
+    params: QueryParams,
+    unitBusinessId: string | undefined,
+    operationId: string,
+    queryConfig: QueryConfig = {},
+  ): Promise<PaginatedResult<FullInvoiceAttributes>> {
+    const { extraOptions, forcedWhere } = buildTransferInvoiceQueryOptions(params, unitBusinessId);
+
+    const result = await this.findPaginated(params, queryConfig, extraOptions, {
+      ...forcedWhere,
+      invoice_operation_id: operationId,
+    });
+
+    return {
+      ...result,
+      data: result.data.map((invoice) => mapListedInvoice(invoice)),
+    };
   }
 
   // Nota interna já gravada (id_system canônico, ver helpers/internal-invoice-id.ts).

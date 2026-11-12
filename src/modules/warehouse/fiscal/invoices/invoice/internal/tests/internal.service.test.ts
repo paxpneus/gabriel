@@ -7,12 +7,14 @@ jest.mock("../../shared", () => ({
     addMissingInvoiceItems: jest.fn(),
   },
   invoiceAttributesRepository: { updateWithAttributesForAllUnits: jest.fn() },
+  invoiceQueryConfig: { filterableFields: ["invoice_operation_id"] },
 }));
 
 jest.mock("../repositories/internal.repository", () => ({
   __esModule: true,
   default: {
     findIdByIdSystem: jest.fn(),
+    listInternalInvoices: jest.fn(),
     findExistingInternalNumbers: jest.fn(),
     findInternalNumbersNotCancelledInUnitBusinesses: jest.fn(),
   },
@@ -244,5 +246,27 @@ describe("InternalInvoiceService — dedup do sync", () => {
     ).resolves.toEqual([]);
     expect(repository.findExistingInternalNumbers).not.toHaveBeenCalled();
     expect(repository.findInternalNumbersNotCancelledInUnitBusinesses).not.toHaveBeenCalled();
+  });
+});
+
+describe("InternalInvoiceService.listInternalInvoices", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("lista pela operação interna com o queryConfig da nota", async () => {
+    operations.findIdByCode.mockResolvedValue("op-internal");
+    repository.listInternalInvoices.mockResolvedValue({ data: [], meta: {} } as any);
+
+    await internalInvoiceService.listInternalInvoices({ page: 1 } as any, undefined);
+
+    expect(repository.listInternalInvoices).toHaveBeenCalledWith({ page: 1 }, undefined, "op-internal", {
+      filterableFields: ["invoice_operation_id"],
+    });
+  });
+
+  it("sem a operação cadastrada responde erro em vez de listar outra coisa", async () => {
+    operations.findIdByCode.mockResolvedValue(null);
+
+    await expect(internalInvoiceService.listInternalInvoices({} as any)).rejects.toThrow("seed da m351");
+    expect(repository.listInternalInvoices).not.toHaveBeenCalled();
   });
 });

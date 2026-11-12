@@ -10,7 +10,10 @@ import {
   buildTransferInvoiceQueryOptions,
   mapListedInvoice,
   invoiceAttributesRepository,
+  notInternalInvoiceWhere,
 } from "../../shared";
+import invoiceOperationRepository from "../../../invoice-operation/invoice-operation.repository";
+import { INVOICE_OPERATION_CODES } from "../../../invoice-operation/invoice-operation.types";
 
 // Queries dos relatórios de nota: desconto de fornecedor por pedido, componentes de kit e notas de transferência sem paginação.
 export class InvoiceReportsRepository extends BaseRepository<Invoice> {
@@ -86,17 +89,22 @@ export class InvoiceReportsRepository extends BaseRepository<Invoice> {
     unitBusinessId: string | undefined,
     queryConfig: QueryConfig = {},
   ): Promise<FullInvoiceAttributes[]> {
-    const unitBusinessCnpjs = await invoiceAttributesRepository.findAllUnitBusinessCnpjs();
+    const [unitBusinessCnpjs, internalOperationId] = await Promise.all([
+      invoiceAttributesRepository.findAllUnitBusinessCnpjs(),
+      invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER),
+    ]);
 
     const { extraOptions, forcedWhere } = buildTransferInvoiceQueryOptions(
       params,
       unitBusinessId,
     );
 
+    // Mesmo recorte do listTransferInvoices: sem nota interna.
     const combinedForcedWhere: WhereOptions = {
       ...forcedWhere,
       sender_cnpj: { [Op.in]: unitBusinessCnpjs },
       receiver_cnpj: { [Op.in]: unitBusinessCnpjs },
+      ...notInternalInvoiceWhere(internalOperationId),
     };
 
     const resolved = QueryParser.parse(params, queryConfig);

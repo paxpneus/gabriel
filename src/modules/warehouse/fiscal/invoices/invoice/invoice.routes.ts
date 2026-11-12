@@ -4,6 +4,7 @@ import labelsController from "./labels/controllers/labels.controller";
 import lifecycleController from "./lifecycle/controllers/lifecycle.controller";
 import ingestionController from "./ingestion/controllers/ingestion.controller";
 import reportsController from "./reports/controllers/reports.controller";
+import internalController from "./internal/controllers/internal.controller";
 import invoiceController from "./core/controllers/invoice.controller";
 
 const router = Router();
@@ -14,6 +15,7 @@ router.use("/", labelsController.router);
 router.use("/", lifecycleController.router);
 router.use("/", ingestionController.router);
 router.use("/", reportsController.router);
+router.use("/", internalController.router);
 router.use("/", invoiceController.router);
 
 export default router;

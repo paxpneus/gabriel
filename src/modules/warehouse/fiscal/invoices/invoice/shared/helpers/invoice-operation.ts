@@ -1,3 +1,4 @@
+import { Op, WhereOptions } from "sequelize";
 import { INVOICE_OPERATION_CODES, InvoiceOperationCode } from "../../../invoice-operation/invoice-operation.types";
 import { InvoiceDirection } from "./invoice-direction";
 
@@ -17,4 +18,10 @@ export function resolveInvoiceOperationCode(facts: InvoiceOperationFacts): Invoi
   if (facts.senderIsUnitBusiness && facts.receiverIsUnitBusiness) return INVOICE_OPERATION_CODES.TRANSFER;
   if (facts.senderIsUnitBusiness && facts.direction === "OUTGOING") return INVOICE_OPERATION_CODES.SALE;
   return INVOICE_OPERATION_CODES.PURCHASE;
+}
+
+// Tira a nota interna das listagens de NF-e (null na coluna continua); sem a operação cadastrada não há nota interna, então não filtra.
+export function notInternalInvoiceWhere(internalOperationId: string | null): WhereOptions {
+  if (!internalOperationId) return {};
+  return { invoice_operation_id: { [Op.or]: { [Op.is]: null, [Op.ne]: internalOperationId } } };
 }

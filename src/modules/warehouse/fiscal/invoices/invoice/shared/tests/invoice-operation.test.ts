@@ -1,4 +1,5 @@
-import { InvoiceOperationFacts, resolveInvoiceOperationCode } from "../helpers/invoice-operation";
+import { Op } from "sequelize";
+import { InvoiceOperationFacts, notInternalInvoiceWhere, resolveInvoiceOperationCode } from "../helpers/invoice-operation";
 import { INVOICE_OPERATION_CODES } from "../../../invoice-operation/invoice-operation.types";
 
 // Nota "neutra" (nenhuma parte é unit business, sem direção): base dos casos abaixo.
@@ -63,5 +64,17 @@ describe("resolveInvoiceOperationCode", () => {
         INVOICE_OPERATION_CODES.TRANSFER,
       );
     });
+  });
+});
+
+describe("notInternalInvoiceWhere", () => {
+  it("mantém nota sem operação (null) e tira só a interna", () => {
+    expect(notInternalInvoiceWhere("op-internal")).toEqual({
+      invoice_operation_id: { [Op.or]: { [Op.is]: null, [Op.ne]: "op-internal" } },
+    });
+  });
+
+  it("sem a operação cadastrada não filtra", () => {
+    expect(notInternalInvoiceWhere(null)).toEqual({});
   });
 });

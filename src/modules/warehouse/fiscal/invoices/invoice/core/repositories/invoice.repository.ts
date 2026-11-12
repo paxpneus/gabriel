@@ -32,10 +32,13 @@ import {
   buildTransferInvoiceQueryOptions,
   invoiceAttributesRepository,
   mapListedInvoice,
+  notInternalInvoiceWhere,
   totalExpectedLiteral,
   totalReadLiteral,
   xmlHeadLiteral,
 } from "../../shared";
+import invoiceOperationRepository from "../../../invoice-operation/invoice-operation.repository";
+import { INVOICE_OPERATION_CODES } from "../../../invoice-operation/invoice-operation.types";
 import { LOGISTIC_OCCURRENCE_CODES } from "../../../../../../handlers/logistic/constants/constants";
 
 // Consultas de leitura/listagem da nota fiscal (CRUD, detalhe e contagens); o resto fica nos domínios.
@@ -178,13 +181,13 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       params,
       unitBusinessId,
     );
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
 
-    const result = await this.findPaginated(
-      params,
-      queryConfig,
-      extraOptions,
-      forcedWhere,
-    );
+    // Nota interna tem listagem própria (internal/), nunca aparece aqui.
+    const result = await this.findPaginated(params, queryConfig, extraOptions, {
+      ...forcedWhere,
+      ...notInternalInvoiceWhere(internalOperationId),
+    });
 
     return {
       ...result,
@@ -203,17 +206,22 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     unitBusinessId: string | undefined,
     queryConfig: QueryConfig = {},
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
-    const unitBusinessCnpjs = await invoiceAttributesRepository.findAllUnitBusinessCnpjs();
+    const [unitBusinessCnpjs, internalOperationId] = await Promise.all([
+      invoiceAttributesRepository.findAllUnitBusinessCnpjs(),
+      invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER),
+    ]);
 
     const { extraOptions, forcedWhere } = buildTransferInvoiceQueryOptions(
       params,
       unitBusinessId,
     );
 
+    // Nota interna também é entre lojas, mas tem listagem própria (internal/).
     const result = await this.findPaginated(params, queryConfig, extraOptions, {
       ...forcedWhere,
       sender_cnpj: { [Op.in]: unitBusinessCnpjs },
       receiver_cnpj: { [Op.in]: unitBusinessCnpjs },
+      ...notInternalInvoiceWhere(internalOperationId),
     });
 
     return {

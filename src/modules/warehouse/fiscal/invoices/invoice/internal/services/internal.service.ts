@@ -5,7 +5,9 @@ import internalInvoiceRepository, {
   InternalInvoiceBranchSide,
   InternalInvoiceRepository,
 } from "../repositories/internal.repository";
-import { invoiceAttributesRepository, invoiceCreationService } from "../../shared";
+import { invoiceAttributesRepository, invoiceCreationService, invoiceQueryConfig } from "../../shared";
+import { PaginatedResult, QueryParams } from "../../../../../../../shared/query/query.types";
+import { FullInvoiceAttributes } from "../../invoice.types";
 import invoiceOperationRepository from "../../../invoice-operation/invoice-operation.repository";
 import { INVOICE_OPERATION_CODES } from "../../../invoice-operation/invoice-operation.types";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
@@ -44,6 +46,20 @@ export interface UpsertInternalInvoiceParams {
 export class InternalInvoiceService extends BaseService<Invoice, InternalInvoiceRepository> {
   constructor() {
     super(internalInvoiceRepository);
+
+    this.queryConfig = invoiceQueryConfig;
+  }
+
+  // Listagem paginada das notas internas; sem unitBusinessId lista de todas as lojas (igual à de transferência).
+  async listInternalInvoices(
+    params: QueryParams,
+    unitBusinessId?: string,
+  ): Promise<PaginatedResult<FullInvoiceAttributes>> {
+    const operationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
+    if (!operationId) {
+      throw new Error("Operação de transferência interna não cadastrada (seed da m351)");
+    }
+    return this.repository.listInternalInvoices(params, unitBusinessId, operationId, this.queryConfig);
   }
 
   // Números já gravados como nota interna com a filial no lado da listagem (dedup do sync); sem a operação no banco, não deduplica.
