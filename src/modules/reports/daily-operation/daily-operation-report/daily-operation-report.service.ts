@@ -13,9 +13,13 @@ export class DailyOperationReportService {
     const lastProcessedAt =
       await dailyOperationReportRepository.getCheckpoint();
 
-    try {
-      await dailyOperationReportRepository.markRunning();
+    // Lock atômico com expiração (fila de hora em hora + POST /run manual); fora do try pra não marcar "failed" o job de outro.
+    const acquired = await dailyOperationReportRepository.markRunning();
+    if (!acquired) {
+      throw new Error("Job já está em execução, aguarde.");
+    }
 
+    try {
       // Pares (invoice_id, unit_business_id): uma invoice pode ter várias
       // linhas de invoice_unit_business_attributes, uma por unit_business.
       const affectedKeys =

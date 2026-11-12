@@ -5,11 +5,9 @@ import { nextStepOnQueue } from "../../../../../shared/types/queue/base-queue";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 
-// Webhook de pedido pode chegar antes de a nota fiscal ficar visível em
-// GET /pedidos/vendas/{id} na Bling (notaFiscal.id ainda vazio) — delay dá
-// tempo da Bling propagar o vínculo antes do fetch, em vez de gravar
-// invoice_id nulo e nunca mais tentar de novo.
-export const ORDER_WEBHOOK_INGESTION_DELAY_MS = 2_000;
+// Webhook de pedido chega antes de a Bling vincular a nota/mudar a situação em GET /pedidos/vendas/{id};
+// 5s dá tempo de propagar (2s não bastou: pedido ficou "Em aberto" sem nota).
+export const ORDER_WEBHOOK_INGESTION_DELAY_MS = 5_000;
 
 // BullMQ: menor número = maior prioridade. 1 é o topo já usado por outras
 // filas (ver bling-webhook.orchestrator.ts) — pedido de atualização manual
@@ -48,6 +46,8 @@ export class BlingOrderQueue extends BaseQueueService<any> {
       },
       // Cobre o pior caso de retry 429 (até ~93s de sleep + fila do limiter por chamada); abortar antes deixa o process() órfão rodando (Promise.race não cancela) e o retry do job duplica tráfego Bling.
       maxProcessingMs: 5 * 60 * 1000,
+      // jobId fixo por pedido: webhook que chega com o job ativo vira rerun em vez de ser descartado.
+      rerunWhileActive: true,
       workless: options.workless,
     });
     this.orderService = orderService;

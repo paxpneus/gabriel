@@ -27,6 +27,8 @@ import {
 } from "./seller-sales-report.types";
 
 const JOB_NAME = "seller_sales_report";
+// Lock "running" mais velho que isso é tratado como morto (restart/deploy no meio); sem heartbeat entre etapas, por isso 60 e não 15.
+const RUNNING_LOCK_STALE_MINUTES = 60;
 // Checkpoint próprio (mesma tabela report_job_checkpoints, job_name distinto)
 // pro scan retroativo de supplier_discount_rules — independente do checkpoint
 // principal, que segue olhando só orders/order_items alterados. Mesma lógica
@@ -286,17 +288,28 @@ export class SellerSalesReportRepository {
     );
   }
 
-  async markRunning(): Promise<void> {
-    await sequelize.query(
+  // Atômico: só um job adquire; assume lock "running" parado há mais de RUNNING_LOCK_STALE_MINUTES (rodada morta no meio).
+  async markRunning(): Promise<boolean> {
+    const [, metadata] = await sequelize.query(
       `
       UPDATE report_job_checkpoints
       SET status = 'running',
           last_run_at = NOW(),
           updated_at = NOW()
       WHERE job_name = :jobName
+        AND (
+          status != 'running'
+          OR updated_at < NOW() - make_interval(mins => :staleMinutes)
+        )
       `,
-      { replacements: { jobName: JOB_NAME } },
+      {
+        replacements: {
+          jobName: JOB_NAME,
+          staleMinutes: RUNNING_LOCK_STALE_MINUTES,
+        },
+      },
     );
+    return ((metadata as { rowCount?: number })?.rowCount ?? 0) > 0;
   }
 
   async markSuccess(jobStartTime: Date, rowsProcessed: number): Promise<void> {

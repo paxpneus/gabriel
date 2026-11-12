@@ -21,17 +21,16 @@ export interface SellerSalesReportJobResult {
 
 export class SellerSalesReportService {
   async runIncrementalJob(): Promise<SellerSalesReportJobResult> {
-    const status = await sellerSalesReportRepository.getJobStatus();
-    if (status?.status === "running") {
-      throw new Error("Job já está em execução, aguarde.");
-    }
-
     const jobStartTime = new Date();
     const lastProcessedAt = await sellerSalesReportRepository.getCheckpoint();
 
-    try {
-      await sellerSalesReportRepository.markRunning();
+    // Lock atômico com expiração (fila de hora em hora + POST /run manual); fora do try pra não marcar "failed" o job de outro.
+    const acquired = await sellerSalesReportRepository.markRunning();
+    if (!acquired) {
+      throw new Error("Job já está em execução, aguarde.");
+    }
 
+    try {
       const orderIds =
         await sellerSalesReportRepository.findAffectedOrderIds(
           lastProcessedAt,

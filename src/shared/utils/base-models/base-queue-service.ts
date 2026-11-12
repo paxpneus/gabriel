@@ -10,6 +10,9 @@ export type baseQueueOptions = {
   lockDuration?: number;
   workless?: boolean;
   maxProcessingMs?: number;
+  // true: add/addDelayed com jobId de job ainda "active" enfileira `${jobId}-rerun` em vez de
+  // ser ignorado pelo BullMQ — evento que chega no meio do processamento (webhook) não se perde.
+  rerunWhileActive?: boolean;
   backoffStrategy?: (
     attemptsMade: number,
     type?: string,
@@ -67,6 +70,7 @@ export abstract class BaseQueueService<T, R = void> {
   >;
   private workerLockDuration: number;
   private maxProcessingMs?: number;
+  private rerunWhileActive: boolean;
 
   constructor(queueName: string, options: baseQueueOptions = {}) {
     this.queueName = queueName;
@@ -74,6 +78,7 @@ export abstract class BaseQueueService<T, R = void> {
     this.workerLockDuration = options.lockDuration ?? 5 * 60 * 1000;
     this.queue = new Queue(this.queueName, { connection: redisConfig });
     this.maxProcessingMs = options.maxProcessingMs;
+    this.rerunWhileActive = !!options.rerunWhileActive;
 
     this.queueEvents = new QueueEvents(this.queueName, {
       connection: redisConfig,
@@ -607,19 +612,10 @@ export abstract class BaseQueueService<T, R = void> {
       removeOnComplete?: boolean | { age: number; count?: number };
     },
   ) {
-    if (jobId) {
-      const existingJob = await this.queue.getJob(jobId);
-      if (existingJob) {
-        const state = await existingJob.getState();
-        if (state === "failed") {
-          await existingJob.remove();
-          console.log(`[QUEUE] Job ${jobId} removido para reprocessamento`);
-        }
-      }
-    }
+    const targetJobId = await this.resolveTargetJobId(jobId);
 
     return this.queue.add(jobOptions?.name ?? this.queueName, data, {
-      jobId,
+      jobId: targetJobId,
       // BullMQ nativo: menor número = maior prioridade dentro do sorted-set
       // de prioridade — mas um job sem `priority` nenhuma entra na lista
       // "wait" comum, que é sempre esvaziada ANTES do sorted-set ser sequer
@@ -653,27 +649,43 @@ export abstract class BaseQueueService<T, R = void> {
     });
   }
 
+  // jobId que add/addDelayed devem usar: job "failed" é removido pra reprocessar; com
+  // rerunWhileActive, job "active" desvia pro `${jobId}-rerun` (que também sai se estiver "failed").
+  private async resolveTargetJobId(jobId?: string): Promise<string | undefined> {
+    if (!jobId) return jobId;
+
+    const existingJob = await this.queue.getJob(jobId);
+    if (!existingJob) return jobId;
+
+    const state = await existingJob.getState();
+    if (state === "failed") {
+      await existingJob.remove();
+      console.log(`[QUEUE] Job ${jobId} removido para reprocessamento`);
+      return jobId;
+    }
+    if (state !== "active" || !this.rerunWhileActive) return jobId;
+
+    // Rerun já em waiting/delayed/active: o add é ignorado pelo BullMQ, e está certo — o lock
+    // por recurso garante que um dos dois ainda vai buscar o estado mais recente.
+    const rerunJobId = `${jobId}-rerun`;
+    const existingRerun = await this.queue.getJob(rerunJobId);
+    if (existingRerun && (await existingRerun.getState()) === "failed") {
+      await existingRerun.remove();
+    }
+    console.log(`[QUEUE] Job ${jobId} ativo — enfileirando ${rerunJobId}`);
+    return rerunJobId;
+  }
+
   async addDelayed(
     data: T,
     jobId: string,
     delayMs: number,
     jobOptions?: { priority?: number; name?: string },
   ) {
-    if (jobId) {
-      const existingJob = await this.queue.getJob(jobId);
-      if (existingJob) {
-        const state = await existingJob.getState();
-        if (state === "failed") {
-          await existingJob.remove();
-          console.log(
-            `[QUEUE] Job ${jobId} com delay removido para reprocessamento`,
-          );
-        }
-      }
-    }
+    const targetJobId = await this.resolveTargetJobId(jobId);
 
     return this.queue.add(jobOptions?.name ?? this.queueName, data, {
-      jobId,
+      jobId: targetJobId,
       delay: delayMs,
       ...(jobOptions?.priority ? { priority: jobOptions.priority } : {}),
       removeOnComplete: true,

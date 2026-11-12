@@ -15,6 +15,7 @@ import {
 import { BULK_FORCE_UPDATE_PRIORITY } from "../bling-orders/bling-order.queue";
 import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import ordersService from "../../../../sales/orders/order/orders.service";
+import { FINAL_ORDER_SITUATIONS } from "../../../../sales/orders/order/helpers/invoiced";
 
 // TEMPORÁRIO: polling que substitui os webhooks da Bling enquanto eles não chegam.
 // Desligar com BLING_POLL_ENABLED=false — o boot remove os dois agendamentos do Redis.
@@ -59,6 +60,10 @@ const INVOICE_SITUATION_TTL_S = 7 * 24 * 3600;
 const ORDERS_CHANGED_CURSOR_KEY = "bling-poll:orders-changed-cursor";
 const ORDERS_CHANGED_CURSOR_MARGIN_MS = 60 * 1000;
 const ORDERS_CHANGED_CURSOR_TTL_S = 7 * 24 * 3600;
+
+// Cursor próprio da reconciliação da migração diária (início da última rodada que deu certo); sem cursor, últimas 24h.
+const MIGRATION_ORDERS_CURSOR_KEY = "bling-poll:migration-orders-cursor";
+const MIGRATION_ORDERS_DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const INVOICE_ENDPOINT = "/nfe";
 const ORDER_ENDPOINT = "/pedidos/vendas";
@@ -353,6 +358,73 @@ export class BlingPollService {
       duration: ORDERS_CHANGED_CURSOR_TTL_S,
     });
     return orders.length;
+  }
+
+  // Migração diária (BLING_MIGRATION): todos os pedidos alterados desde a última rodada, sem teto, enfileirando só os
+  // divergentes do banco. Não depende do BLING_POLL_ENABLED — quem chama é o script da migração, não o scheduler.
+  async reconcileChangedOrders(): Promise<number> {
+    const integration = await getBlingIntegration("Bling");
+    if (!integration) {
+      console.warn("[BlingPoll] Integration não encontrada. Pulando reconciliação de pedidos.");
+      return 0;
+    }
+
+    const startedAt = new Date();
+    const cursor = await redisService.get<string>(MIGRATION_ORDERS_CURSOR_KEY);
+    const from = new Date(
+      (cursor
+        ? Date.parse(cursor)
+        : startedAt.getTime() - MIGRATION_ORDERS_DEFAULT_WINDOW_MS) -
+        ORDERS_CHANGED_CURSOR_MARGIN_MS,
+    );
+
+    let enqueued = 0;
+    for await (const page of paginateBling<BlingOrderSummary>(ORDER_ENDPOINT, {
+      dataAlteracaoInicial: toBlingDateTime(from),
+    })) {
+      // Uma query por página (sem N+1): só o necessário pra comparar situação e nota.
+      const existing = await ordersService.findAll({
+        where: {
+          integrations_id: integration.id,
+          id_order_system: { [Op.in]: page.map((order) => String(order.id)) },
+        },
+        attributes: ["id_order_system", "actual_situation", "invoice_id"],
+      });
+      const byBlingId = new Map(
+        existing.map((order) => [order.id_order_system, order]),
+      );
+
+      // Divergente = ausente no banco, situação diferente, ou situação final na Bling sem nota aqui.
+      const divergent = page.filter((order) => {
+        const local = byBlingId.get(String(order.id));
+        if (!local) return true;
+        const situation = String(order.situacao?.id);
+        if (situation !== local.actual_situation) return true;
+        return FINAL_ORDER_SITUATIONS.includes(situation) && !local.invoice_id;
+      });
+
+      // jobId igual ao do webhook de atualização; prioridade baixa (criação fura a fila).
+      await Promise.all(
+        divergent.map((order) =>
+          this.queues.orderIngestion.add(
+            { event: "order.updated", action: "updated", data: { id: order.id } },
+            `bling-order-updated-${order.id}`,
+            UPDATE_JOB_OPTIONS,
+          ),
+        ),
+      );
+      enqueued += divergent.length;
+    }
+
+    // Cursor só avança com sucesso: rodada que quebrou no meio é refeita inteira pela próxima.
+    await redisService.set(MIGRATION_ORDERS_CURSOR_KEY, startedAt.toISOString(), {
+      mode: "EX",
+      duration: ORDERS_CHANGED_CURSOR_TTL_S,
+    });
+    console.log(
+      `[BlingPoll] Reconciliação desde ${toBlingDateTime(from)}: ${enqueued} pedido(s) divergente(s) enfileirado(s).`,
+    );
+    return enqueued;
   }
 
   // Uma query por página: notas sem linha completa em invoices — ausentes ou só stub

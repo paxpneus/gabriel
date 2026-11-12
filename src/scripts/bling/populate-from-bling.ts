@@ -15,6 +15,7 @@ import type { DirectUpsertJobPayload } from "../../modules/handlers/bling/servic
 import { BlingDirectUpsertQueue } from "../../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue";
 import { BlingApiFetchQueue } from "../../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { BlingOrderQueue } from "../../modules/handlers/bling/services/bling-orders/bling-order.queue";
+import { BlingPollService } from "../../modules/handlers/bling/services/bling-poll/bling-poll.service";
 import { UnitBusiness } from "../../modules/warehouse";
 import { setupAssociations } from "../../config/sequelize-associations";
 import sequelize from "../../config/sequelize";
@@ -55,8 +56,8 @@ const QUEUE_POLL_MS = 5_000;
 /**
  * Quantos dias para trás considerar no filtro incremental `dataAlteracaoInicial`.
  * Usado apenas por produtos / fornecedores / vendedores / produto-fornecedor.
- * Notas fiscais, pedidos e estoque usam a janela "hoje" (ver TODAY_START/END
- * e daysAgo(0) mais abaixo).
+ * Notas fiscais e estoque usam a janela "hoje" (ver TODAY_START/END e
+ * daysAgo(0) mais abaixo); pedidos usam o cursor de BlingPollService.reconcileChangedOrders.
  */
 const INCREMENTAL_LOOKBACK_DAYS = Number(
   process.env.BLING_INCREMENTAL_LOOKBACK_DAYS ?? 2,
@@ -128,10 +129,6 @@ const TODAY_END = (() => {
   d.setHours(23, 59, 59, 999);
   return d;
 })();
-
-/** Janela usada em /pedidos/vendas → dataInicial / dataFinal (formato "YYYY-MM-DD") */
-const ORDERS_DATA_INICIAL = formatBlingDateOnly(daysAgo(0));
-const ORDERS_DATA_FINAL = formatBlingDateOnly(new Date());
 
 /** Janela usada em /nfe e /nfce → dataEmissaoInicial / dataEmissaoFinal (formato completo com horário) */
 const INVOICE_DATA_EMISSAO_INICIAL = (() => {
@@ -702,46 +699,23 @@ async function migrateStocks() {
   await waitForQueuesToDrain("Estoques");
 }
 
-async function migrateOrders() {
+// Pedidos alterados desde a última migração que divergem do banco (situação/nota) → order.updated.
+// Substitui o reenfileiramento de todos os pedidos do dia como order.created.
+async function reconcileOrders() {
   console.log("─".repeat(55));
-  console.log("🛒  ETAPA — Pedidos");
-  console.log(
-    `  🔄 Filtro (hoje): dataInicial=${ORDERS_DATA_INICIAL} | dataFinal=${ORDERS_DATA_FINAL}`,
-  );
+  console.log("🛒  ETAPA — Pedidos (reconciliação de divergentes)");
   console.log("─".repeat(55));
 
-  let totalCount = 0;
-
-  for await (const page of paginateBling<{
-    id: number;
-    numero?: string;
-    situacao?: string;
-    data?: string;
-    loja?: { id: number };
-  }>("/pedidos/vendas", {
-    dataInicial: ORDERS_DATA_INICIAL,
-    dataFinal: ORDERS_DATA_FINAL,
-  })) {
-    for (const order of page) {
-      const blingId = order.id;
-
-      await (DRY_RUN
-        ? Promise.resolve(
-            console.log(`[DRY_RUN] OrderQueue: migration-order-${blingId}`),
-          )
-        : orderQueue.add(
-            { event: "order.created", data: { id: blingId } },
-            `migration-order-${blingId}`,
-          ));
-
-      totalCount++;
-      if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
-    }
-    console.log(`  → ${totalCount} pedido(s) enfileirado(s)...`);
-    if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
+  if (DRY_RUN) {
+    console.log("[DRY_RUN] Pulando reconciliação de pedidos");
+    return;
   }
 
-  console.log(`\n  🛒 Total de pedidos enfileirados: ${totalCount}`);
+  const enqueued = await new BlingPollService({
+    apiFetch: apiFetchQueue,
+    orderIngestion: orderQueue,
+  }).reconcileChangedOrders();
+  console.log(`\n  🛒 Total de pedidos divergentes enfileirados: ${enqueued}`);
   await waitForQueuesToDrain("Pedidos");
 }
 
@@ -933,7 +907,7 @@ async function main() {
     await migrateInvoices("NF-e", 0); // 6 — depende de UnitBusiness — somente hoje
     await migrateInvoices("NF-e", 1); // 5 — depende de UnitBusiness — somente hoje
     await migrateCancelledInvoices("NF-e"); // somente hoje
-    await migrateOrders(); // pedidos depois de notas: mais lento e faz mais chamadas — somente hoje
+    await reconcileOrders(); // pedidos depois de notas: só os divergentes do banco desde a última rodada
   } catch (err: any) {
     console.error("\n❌ Erro durante a migração:", err.message);
     process.exit(1);

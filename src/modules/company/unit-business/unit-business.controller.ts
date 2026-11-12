@@ -111,8 +111,7 @@ export class UnitBusinessController extends BaseController<
         locals.BlingMigrationQueue,
         locals.TCarMigrationQueue,
         locals.TCarUpsertQueue,
-        locals.DailyOperationReportQueue,
-        locals.DailySalesReportQueue,
+        locals.ReportQueue,
         locals.AutoBackupQueue,
       ].filter(Boolean);
 

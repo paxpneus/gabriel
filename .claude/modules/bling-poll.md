@@ -44,10 +44,17 @@ Código: `src/modules/handlers/bling/services/bling-poll/bling-poll.service.ts` 
   - Situação diferente ou nunca vista → `BLING_API_FETCH`, jobId `bling-poll-invoice-refetch-<id>-<situacao>`, e grava a situação nova.
   - "Nunca vista" cobre notas canceladas/alteradas enquanto o webhook estava fora.
 
+## `reconcileChangedOrders` (migração diária, fora do poll)
+- Chamado no fim do `populate-from-bling.ts` (`BLING_MIGRATION`), no lugar do antigo "enfileira todo pedido de hoje como `order.created`". **Não depende** do `BLING_POLL_ENABLED` nem do gate de filas vazias; `DRY_RUN` só loga e pula.
+- `/pedidos/vendas?dataAlteracaoInicial=<cursor − 1min>` paginado até o fim (sem o teto de 50). Cursor próprio `bling-poll:migration-orders-cursor` (início da última rodada que deu certo, TTL 7d), só avança no sucesso; sem cursor, últimas 24h.
+- Uma `ordersService.findAll` por página (`id_order_system`, `actual_situation`, `invoice_id`). Enfileira só divergente: ausente no banco, `situacao.id` ≠ `actual_situation`, ou situação final (`FINAL_ORDER_SITUATIONS`) sem `invoice_id`. Vai como `order.updated`, jobId `bling-order-updated-<id>`, `UPDATE_JOB_OPTIONS` (prioridade 10).
+- Pedido que mudou só valor/itens, sem mudar situação, não é reprocessado aqui.
+
 ## Comportamento da API Bling (confirmado ao vivo)
 - **Datas com hora:** filtro com hora precisa de espaço como `%20`; com `+` a Bling ignora o filtro. O `fetchBlingListPage` (`bling-sync/helpers/bling-list.ts`) serializa assim.
 - **`dataEmissaoInicial` só com data em `/nfe`:** com a data de hoje volta 0, então use sempre com hora.
 - **Ordem:** listagens vêm da emissão/número mais recente pra mais antiga.
+- **Paginação:** resposta é só `data` (sem total/página); `pagina` é respeitado mesmo com `dataAlteracaoInicial` em `/pedidos/vendas`. `paginateBling` para em página vazia ou com menos de `BLING_LIST_PAGE_SIZE` (100).
 
 ## Não coberto
 - **Pedidos:** mais de 50 alterados numa janela → só os 50 primeiros da listagem (por número, decrescente).

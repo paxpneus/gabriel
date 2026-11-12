@@ -210,6 +210,98 @@ describe("BlingPollService", () => {
     });
   });
 
+  describe("reconcileChangedOrders", () => {
+    // paginateBling simulado com páginas fixas do /pedidos/vendas.
+    function mockOrderPages(pages: any[][]) {
+      (paginateBling as jest.Mock).mockImplementation(async function* () {
+        for (const page of pages) yield page;
+      });
+    }
+    const enqueuedOrderIds = () =>
+      orderIngestion.add.mock.calls.map(([data]) => data.data.id);
+
+    it("enfileira só pedido ausente, com situação diferente ou final sem nota", async () => {
+      mockOrderPages([[
+        { id: 1, situacao: { id: 6 } },
+        { id: 2, situacao: { id: 6 } },
+        { id: 3, situacao: { id: 9 } },
+        { id: 4, situacao: { id: 9 } },
+        { id: 5, situacao: { id: 9 } },
+      ]]);
+      (ordersService.findAll as jest.Mock).mockResolvedValue([
+        { id_order_system: "2", actual_situation: "6", invoice_id: null },
+        { id_order_system: "3", actual_situation: "6", invoice_id: null },
+        { id_order_system: "4", actual_situation: "9", invoice_id: null },
+        { id_order_system: "5", actual_situation: "9", invoice_id: "invoice-5" },
+      ]);
+
+      await expect(service.reconcileChangedOrders()).resolves.toBe(3);
+
+      expect(enqueuedOrderIds()).toEqual([1, 3, 4]);
+      expect(orderIngestion.add).toHaveBeenCalledWith(
+        { event: "order.updated", action: "updated", data: { id: 1 } },
+        "bling-order-updated-1",
+        { priority: expect.any(Number), name: "bling-poll-update" },
+      );
+      expect(ordersService.findAll).toHaveBeenCalledWith({
+        where: {
+          integrations_id: "integration-1",
+          id_order_system: { [Op.in]: ["1", "2", "3", "4", "5"] },
+        },
+        attributes: ["id_order_system", "actual_situation", "invoice_id"],
+      });
+    });
+
+    it("percorre todas as páginas com uma query por página", async () => {
+      mockOrderPages([[{ id: 1, situacao: { id: 6 } }], [{ id: 2, situacao: { id: 6 } }]]);
+      (ordersService.findAll as jest.Mock).mockResolvedValue([]);
+
+      await service.reconcileChangedOrders();
+
+      expect(ordersService.findAll).toHaveBeenCalledTimes(2);
+      expect(enqueuedOrderIds()).toEqual([1, 2]);
+    });
+
+    it("parte do cursor menos 1min e avança o cursor no sucesso", async () => {
+      (redisService.get as jest.Mock).mockResolvedValue("2026-11-10T12:00:00.000Z");
+      mockOrderPages([]);
+
+      await service.reconcileChangedOrders();
+
+      // 12:00 UTC − 1min = 08:59 BRT
+      expect(paginateBling).toHaveBeenCalledWith("/pedidos/vendas", {
+        dataAlteracaoInicial: "2026-11-10 08:59:00",
+      });
+      expect(redisService.set).toHaveBeenCalledWith(
+        "bling-poll:migration-orders-cursor", expect.any(String), expect.any(Object),
+      );
+    });
+
+    it("não avança o cursor quando o enfileiramento falha", async () => {
+      mockOrderPages([[{ id: 1, situacao: { id: 6 } }]]);
+      (ordersService.findAll as jest.Mock).mockResolvedValue([]);
+      orderIngestion.add.mockRejectedValueOnce(new Error("redis down"));
+
+      await expect(service.reconcileChangedOrders()).rejects.toThrow("redis down");
+
+      expect(redisService.set).not.toHaveBeenCalledWith(
+        "bling-poll:migration-orders-cursor", expect.anything(), expect.anything(),
+      );
+    });
+
+    it("não depende do BLING_POLL_ENABLED nem das filas vazias", async () => {
+      process.env.BLING_POLL_ENABLED = "false";
+      orderIngestion.hasPendingJobs.mockResolvedValue(true);
+      mockOrderPages([[{ id: 1, situacao: { id: 6 } }]]);
+      (ordersService.findAll as jest.Mock).mockResolvedValue([]);
+
+      await service.reconcileChangedOrders();
+
+      expect(enqueuedOrderIds()).toEqual([1]);
+      delete process.env.BLING_POLL_ENABLED;
+    });
+  });
+
   it.each([
     ["BLING_API_FETCH", apiFetch],
     ["BLING_ORDER_INGESTION", orderIngestion],

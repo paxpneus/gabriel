@@ -1,5 +1,7 @@
-import { SalesReportQueue } from "./../modules/reports/daily-sales/sales-report/sales-report.queue";
+import { REPORT_HOURLY_TASK, ReportQueue } from "../modules/reports/report.queue";
 import { Express } from "express";
+import { Queue } from "bullmq";
+import { redisConfig } from "../config/redis";
 import crypto from "crypto";
 import { blingApi } from "../modules/handlers/bling/api/bling_api.service";
 
@@ -48,7 +50,6 @@ import {
   scheduleTCarSync,
   TCarSyncQueue,
 } from "../modules/handlers/tecinco/queues/tecinco-sync-queue";
-import { DailyOperationReportQueue } from "../modules/reports/daily-operation/daily-operation-report/daily-operation-report.queue";
 import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
 
 import { BlingManifestacaoService } from "../modules/handlers/bling/services/bling-nfe/automations/auto-manifest/nfe-manifest-web-scraping.service";
@@ -81,8 +82,7 @@ export type QueueName =
   | "TCAR_API_FETCH"
   | "TCAR_INVOICE"
   | "TCAR_SYNC"
-  | "DAILY_OPERATION_REPORT"
-  | "DAILY_SALES_REPORT"
+  | "REPORT"
   | "AUTO_BACKUP"
   | "CTE_INGESTION"
   | "CTE_XML_BATCH"
@@ -220,12 +220,7 @@ function buildQueues(activeWorkers: QueueName[]) {
   const tcarSyncQueue = new TCarSyncQueue(tcarUpsertQueue, tcarInvoiceQueue, {
     workless: w("TCAR_SYNC"),
   });
-  const dailyOperationReportQueue = new DailyOperationReportQueue({
-    workless: w("DAILY_OPERATION_REPORT"),
-  });
-  const dailySalesReportQueue = new SalesReportQueue({
-    workless: w("DAILY_SALES_REPORT"),
-  });
+  const reportQueue = new ReportQueue({ workless: w("REPORT") });
   const autoBackupQueue = new AutoBackupQueue({ workless: w("AUTO_BACKUP") });
 
   const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
@@ -260,8 +255,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     blingStockSyncQueue,
     blingStockMovementsScrapingQueue,
     magentoSyncQueue,
-    dailyOperationReportQueue,
-    dailySalesReportQueue,
+    reportQueue,
     autoBackupQueue,
     tcarUpsertQueue,
     tcarInvoiceQueue,
@@ -289,8 +283,7 @@ export function registerQueues(app: Express) {
     blingStockSyncQueue,
     blingStockMovementsScrapingQueue,
     magentoSyncQueue,
-    dailyOperationReportQueue,
-    dailySalesReportQueue,
+    reportQueue,
     autoBackupQueue,
     tcarUpsertQueue,
     tcarInvoiceQueue,
@@ -321,8 +314,7 @@ export function registerQueues(app: Express) {
   app.locals.MagentoSyncQueue = magentoSyncQueue;
   app.locals.TCarUpsertQueue = tcarUpsertQueue;
   app.locals.TCarInvoiceQueue = tcarInvoiceQueue;
-  app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
-  app.locals.DailySalesReportQueue = dailySalesReportQueue;
+  app.locals.ReportQueue = reportQueue;
   app.locals.AutoBackupQueue = autoBackupQueue;
   app.locals.TCarSyncQueue = tcarSyncQueue;
   app.locals.UploaderQueue = uploaderQueue;
@@ -345,8 +337,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(blingStockSyncQueue.queue),
       new BullMQAdapter(blingStockMovementsScrapingQueue.queue),
       new BullMQAdapter(magentoSyncQueue.queue),
-      new BullMQAdapter(dailyOperationReportQueue.queue),
-      new BullMQAdapter(dailySalesReportQueue.queue),
+      new BullMQAdapter(reportQueue.queue),
       new BullMQAdapter(autoBackupQueue.queue),
       new BullMQAdapter(tcarUpsertQueue.queue),
       new BullMQAdapter(tcarInvoiceQueue.queue),
@@ -405,8 +396,7 @@ export function registerQueues(app: Express) {
     TCarUpsertQueue: "TCAR_API_FETCH",
     TCarInvoiceQueue: "TCAR_INVOICE",
     TCarSyncQueue: "TCAR_SYNC",
-    DailyOperationReportQueue: "DAILY_OPERATION_REPORT",
-    DailySalesReportQueue: "DAILY_SALES_REPORT",
+    ReportQueue: "REPORT",
     AutoBackupQueue: "AUTO_BACKUP",
   });
 
@@ -571,22 +561,36 @@ export function startAutomationWorkers() {
 // ─── container: workers (relatórios e backup) ────────────────────────────────
 export function startWorkers() {
   const {
-    dailyOperationReportQueue,
-    dailySalesReportQueue,
+    reportQueue,
     autoBackupQueue,
     cteIngestionQueue,
     cteDownloadQueue,
     uploaderQueue,
   } = buildQueues([
-    "DAILY_OPERATION_REPORT",
-    "DAILY_SALES_REPORT",
+    "REPORT",
     "AUTO_BACKUP",
     "CTE_INGESTION",
     "CTE_XML_BATCH",
     "UPLOADER",
   ]);
 
-  dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  // TEMPORÁRIO (apagar depois de um deploy): repeats das filas antigas de relatório, sem worker acumulariam job no Redis (noeviction).
+  for (const legacyQueueName of ["DAILY_OPERATION_REPORT", "SALES_REPORT"]) {
+    const legacyQueue = new Queue(legacyQueueName, { connection: redisConfig });
+    void legacyQueue
+      .getRepeatableJobs()
+      .then((repeats) =>
+        Promise.all(repeats.map((repeat) => legacyQueue.removeRepeatableByKey(repeat.key))),
+      )
+      .catch((err) => console.error(`[QUEUE] Falha ao limpar repeats de ${legacyQueueName}:`, err.message))
+      .finally(() => legacyQueue.close());
+  }
+
+  // Um repeat só: o "hourly" enfileira seller → sales → daily operation, que rodam um por vez (concurrency 1).
+  reportQueue.scheduleRepeat({
+    every: 1 * 60 * 60 * 1000,
+    data: { task: REPORT_HOURLY_TASK },
+  });
   autoBackupQueue.scheduleRepeat({
     cron: "0 19 * * *",
     tz: "America/Sao_Paulo",
@@ -606,22 +610,14 @@ export function startWorkers() {
 
   uploaderQueue.startCteArchiveSweep();
 
-  setTimeout(
-    () => {
-      dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-    },
-    30 * 60 * 1000,
-  );
-
-  void dailyOperationReportQueue;
+  void reportQueue;
   void autoBackupQueue;
   void cteIngestionQueue;
   void cteDownloadQueue;
   void uploaderQueue;
 
   console.log("🚀 Workers de relatórios/backup ativos:");
-  console.log("  → DAILY_OPERATION_REPORT (1h)");
-  console.log("  → DAILY_SALES_REPORT (1h, offset 30min)");
+  console.log("  → REPORT (1h: seller sales → sales → daily operation)");
   console.log("  → AUTO_BACKUP (19h BRT)");
   console.log("  → CTE_INGESTION (30min)");
   console.log("  → UPLOADER (throttle 3/5s, reconcile 22h BRT, sweep CT-e XML 10min)");

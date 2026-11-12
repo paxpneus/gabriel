@@ -38,7 +38,8 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         duration: 1000,
       },
       maxProcessingMs: 60_000,
-
+      // Recebe webhook Bling: evento com o job ativo vira rerun em vez de ser descartado.
+      rerunWhileActive: true,
       workless: options.workless,
     });
   }

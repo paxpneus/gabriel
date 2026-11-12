@@ -521,6 +521,8 @@ export class BlingApiFetchQueue extends BaseQueueService<
       },
       maxProcessingMs: 600_000,
       lockDuration: 10 * 60 * 1000,
+      // Recebe webhook Bling (ex.: bling-invoice-fetch-<id>): evento com o job ativo vira rerun.
+      rerunWhileActive: true,
       workless: options.workless,
       backoffStrategy: (attemptsMade, _type, err) => {
         const status = (err as any)?.response?.status;
