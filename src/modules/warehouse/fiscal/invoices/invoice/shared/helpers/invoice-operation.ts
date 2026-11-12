@@ -11,6 +11,10 @@ export interface InvoiceOperationFacts {
   isInternal: boolean;
 }
 
+// Mensagens pro usuário quando um fluxo atual recebe nota/lote interno (só os fluxos de internal/ aceitam).
+export const INTERNAL_INVOICE_REFUSED_MESSAGE = "Nota interna: use a tela de nota interna.";
+export const INTERNAL_BATCH_REFUSED_MESSAGE = "Lote de nota interna: use a tela de nota interna.";
+
 // Operação da nota, mesma precedência do view-point.ts: interna > devolução > transferência > venda > compra.
 export function resolveInvoiceOperationCode(facts: InvoiceOperationFacts): InvoiceOperationCode {
   if (facts.isInternal) return INVOICE_OPERATION_CODES.INTERNAL_TRANSFER;

@@ -19,6 +19,7 @@ import {
   resolveInvoiceViewPoint,
 } from "../helpers/view-point";
 import {
+  internalInvoiceScopeService,
   invoiceAttributesRepository,
   invoiceQueryConfig,
   invoiceXmlRepository,
@@ -192,6 +193,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
   // PUT /bulk genérico: mesma validação de transfer_invoice_reference do updateInvoices.
   async bulkUpdate(data: Partial<Invoice["_creationAttributes"]>, options: UpdateOptions) {
+    // PUT /bulk: nota interna só pelos fluxos de internal/.
+    await internalInvoiceScopeService.assertNotInternalInvoices(options.where, options.transaction ?? undefined);
     await transferReferenceService.assertTransferReferenceWrite(data, options.where, options.transaction ?? undefined);
     return super.bulkUpdate(data, options);
   }

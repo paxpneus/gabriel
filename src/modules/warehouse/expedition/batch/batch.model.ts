@@ -24,6 +24,7 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public finished_at?: Date | null;
   public operator_id!: string;
   public correction_letter_justification?: string | null;
+  public is_internal!: boolean;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -117,6 +118,12 @@ ExpeditionBatch.init(
     correction_letter_justification: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+    // Lote de nota interna (m352): só o internal/ grava true; consultas/ações atuais de lote ficam com false.
+    is_internal: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
   },
   {

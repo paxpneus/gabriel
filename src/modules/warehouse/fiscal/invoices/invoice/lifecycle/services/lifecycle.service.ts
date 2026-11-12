@@ -9,7 +9,7 @@ import invoiceUnitBusinessAttributesRepository from "../../../invoice-unit-busin
 import invoiceLifecycleRepository, {
   InvoiceLifecycleRepository,
 } from "../repositories/lifecycle.repository";
-import { invoiceAttributesRepository, transferReferenceService } from "../../shared";
+import { internalInvoiceScopeService, invoiceAttributesRepository, transferReferenceService } from "../../shared";
 
 // Mudanças de status/atributos da nota por unit business: abrir, finalizar, uso e consumo, agendar e atualização genérica.
 export class InvoiceLifecycleService extends BaseService<Invoice, InvoiceLifecycleRepository> {
@@ -18,6 +18,8 @@ export class InvoiceLifecycleService extends BaseService<Invoice, InvoiceLifecyc
   }
 
   async updateInvoicesOpen(ids: string[], unitBusinessId: string) {
+    // Nota interna só pelos fluxos de internal/.
+    await internalInvoiceScopeService.assertNotInternalInvoices({ id: ids });
     return invoiceAttributesRepository.updateWithAttributes(
       ids,
       unitBusinessId,
@@ -28,6 +30,8 @@ export class InvoiceLifecycleService extends BaseService<Invoice, InvoiceLifecyc
 
   // Uso e consumo: finaliza na unit business e acrescenta o motivo em observation (nunca sobrescreve).
   async markAsInternalUse(ids: string[], unitBusinessId: string) {
+    // Nota interna só pelos fluxos de internal/.
+    await internalInvoiceScopeService.assertNotInternalInvoices({ id: ids });
     await sequelize.transaction(async (t) => {
       await invoiceAttributesRepository.updateWithAttributes(
         ids,
@@ -50,6 +54,8 @@ export class InvoiceLifecycleService extends BaseService<Invoice, InvoiceLifecyc
     if (!trimmedObservation) {
       throw new Error("Observação é obrigatória para finalizar a nota");
     }
+    // Nota interna só pelos fluxos de internal/.
+    await internalInvoiceScopeService.assertNotInternalInvoices({ id });
 
     const attribute = await invoiceUnitBusinessAttributesRepository.findInvoiceAttribute(
       id,

@@ -75,7 +75,8 @@ export class InvoiceCancellationService extends BaseService<Invoice, InvoiceCanc
   ): Promise<void> {
     await Promise.all(
       target.openBatchInvoiceIds.map((id) =>
-        batchInvoicesService.removeBatchInvoice(id, t),
+        // Cancelamento tira a nota de qualquer lote aberto, inclusive o interno.
+        batchInvoicesService.removeBatchInvoice(id, t, { allowInternal: true }),
       ),
     );
 

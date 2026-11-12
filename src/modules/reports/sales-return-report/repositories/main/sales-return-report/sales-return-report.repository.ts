@@ -6,7 +6,9 @@ import {
   movementInvoiceIdsSql,
   unitBusinessPeriodWhere,
 } from "../../../../../../shared/query/query-objects/stock-movements/stock-movement.filters";
-import { XML_HEAD_LENGTH } from "../../../../../warehouse/fiscal/invoices/invoice";
+import { notInternalInvoiceSql, XML_HEAD_LENGTH } from "../../../../../warehouse/fiscal/invoices/invoice";
+import invoiceOperationRepository from "../../../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.repository";
+import { INVOICE_OPERATION_CODES } from "../../../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.types";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import {
   ReturnInvoiceCandidateRow,
@@ -43,6 +45,7 @@ export class SalesReturnReportRepository {
    * Nota = invoice_id ou id Bling (bling_origin_id); venda = saída do mesmo emitente com o nº do return_invoice_reference.
    */
   async findReturnLines(movementIds: string[]): Promise<SalesReturnLineRow[]> {
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
     if (!movementIds.length) return [];
 
     return sequelize.query<SalesReturnLineRow>(
@@ -68,6 +71,8 @@ export class SalesReturnReportRepository {
           ON s.number_system = ret.return_invoice_reference
          AND s.sender_cnpj = ret.sender_cnpj
          AND s.id <> ret.id
+         -- Nota interna com o mesmo número não é a venda devolvida.
+         AND ${notInternalInvoiceSql(internalOperationId, "s.invoice_operation_id")}
         WHERE ret.id IN (SELECT return_invoice_id FROM mv)
           AND EXISTS (
             SELECT 1 FROM invoice_unit_business_attributes sa

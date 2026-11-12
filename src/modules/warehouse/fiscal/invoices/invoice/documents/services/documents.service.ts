@@ -8,7 +8,7 @@ import { decryptXml, isEncrypted } from "../../../../../../../shared/utils/xml/x
 import { generateDanfePdfBuffer } from "../../../../../../../shared/utils/xml/danfe-generator";
 import Invoice from "../../invoice.model";
 import invoiceDocumentsRepository, { InvoiceDocumentsRepository } from "../repositories/documents.repository";
-import { invoiceAttributesRepository, invoiceXmlRepository, normalizeInvoiceNumber } from "../../shared";
+import { internalInvoiceScopeService, invoiceAttributesRepository, invoiceXmlRepository, normalizeInvoiceNumber } from "../../shared";
 import { extractCorrectionLetterIdentification } from "../helpers/correction-letter";
 import { correctionLetterAttachedAudit } from "../helpers/audit";
 import uploaderService from "../../../../../../handlers/uploader/services/uploader.service";
@@ -36,6 +36,8 @@ export class InvoiceDocumentsService extends BaseService<Invoice, InvoiceDocumen
   // transportadora: confere chave + número lidos do PDF contra a nota e a libera sem transferência no lote/romaneio.
   async attachCorrectionLetter(id: string, file: { buffer: Buffer; mimeType: string }, userId: string | null) {
     if (file.mimeType !== "application/pdf") throw new Error("Envie a carta de correção em PDF.");
+    // Nota interna só pelos fluxos de internal/.
+    await internalInvoiceScopeService.assertNotInternalInvoices({ id });
 
     const letter = await extractCorrectionLetterIdentification(file.buffer);
     if (!letter.isCorrectionLetter) throw new Error("O arquivo enviado não é uma carta de correção.");
@@ -108,6 +110,8 @@ export class InvoiceDocumentsService extends BaseService<Invoice, InvoiceDocumen
 
   // PDF da carta de correção: da nuvem, ou do staging (temp_files) enquanto o upload não terminou. Não há como gerar a carta.
   async getCorrectionLetterFile(id: string): Promise<{ buffer: Buffer; filename: string }> {
+    // Nota interna só pelos fluxos de internal/.
+    await internalInvoiceScopeService.assertNotInternalInvoices({ id });
     const invoice = await this.findById(id, { attributes: ["id", "correction_letter_path"] });
     if (!invoice) throw new Error("Nota fiscal não encontrada");
     let path = invoice.correction_letter_path;
@@ -132,6 +136,8 @@ export class InvoiceDocumentsService extends BaseService<Invoice, InvoiceDocumen
 
 
   async getDanfeBuffer(id: string): Promise<Buffer> {
+    // Nota interna não tem DANFE (só pelos fluxos de internal/).
+    await internalInvoiceScopeService.assertNotInternalInvoices({ id });
     const invoice = await this.repository.findById(id, {
       attributes: ["id", "danfe_path", "xml_path"],
     });
@@ -202,6 +208,8 @@ export class InvoiceDocumentsService extends BaseService<Invoice, InvoiceDocumen
     invoiceIds: string[],
     unitBusinessId?: string,
   ): Promise<Buffer | null> {
+    // Nota interna não tem DANFE (só pelos fluxos de internal/).
+    await internalInvoiceScopeService.assertNotInternalInvoices({ id: invoiceIds });
     const pdf = await sequelize.transaction(async (transaction) => {
       const invoices = await this.repository.findAll({
         where: { id: { [Op.in]: invoiceIds } },

@@ -17,7 +17,7 @@ import userService from "../../../../../../company/users/users/user.service";
 import Brand from "../../../../../../inventory/brands/brands.model";
 import Rim from "../../../../../../inventory/rims/rim.model";
 import TireMeasure from "../../../../../../inventory/tire-measures/tire-measure.model";
-import { invoiceQueryConfig } from "../../shared";
+import { internalInvoiceScopeService, invoiceQueryConfig } from "../../shared";
 
 // Relatórios de nota (produto, fornecedor e transferência) e o lookup de desconto de fornecedor por linha.
 export class InvoiceReportsService extends BaseService<Invoice, InvoiceReportsRepository> {
@@ -174,6 +174,7 @@ export class InvoiceReportsService extends BaseService<Invoice, InvoiceReportsRe
           "emitted_at",
           "xml_key",
           "sender_name",
+          "invoice_operation_id",
         ],
         include: [
           {
@@ -255,10 +256,13 @@ export class InvoiceReportsService extends BaseService<Invoice, InvoiceReportsRe
 
     // Pedido cancelado no Bling (situação 12) tira a nota do relatório; nota sem pedido ou com qualquer outro status entra.
     // Pós-fetch porque o findAll com params sobrescreve o `where` (e condição no include só esconderia o pedido).
+    // Nota interna também sai (só aparece nos fluxos de internal/).
+    const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
     const rows = fetchedRows.filter(
       (invoice) =>
         (invoice as Invoice & { order?: Order | null }).order?.actual_situation !==
-        BLING_CANCELLED_SITUACAO_ID,
+          BLING_CANCELLED_SITUACAO_ID &&
+        (!internalOperationId || invoice.invoice_operation_id !== internalOperationId),
     );
 
     const supplierDiscountLookup = await this.buildSupplierDiscountLookup(
@@ -440,7 +444,7 @@ export class InvoiceReportsService extends BaseService<Invoice, InvoiceReportsRe
 
   async getInvoiceSupplierReport(params: QueryParams, unitBusinessId: string) {
     const type = params.filters?.type ?? "OUTGOING";
-    const rows = await this.findAll(
+    const fetchedRows = await this.findAll(
       {
         subQuery: false,
         attributes: [
@@ -450,6 +454,7 @@ export class InvoiceReportsService extends BaseService<Invoice, InvoiceReportsRe
           "xml_key",
           // Só pro `total_products_value` do `summary`.
           "invoice_products_value",
+          "invoice_operation_id",
         ],
         include: [
           {
@@ -503,6 +508,11 @@ export class InvoiceReportsService extends BaseService<Invoice, InvoiceReportsRe
       },
       params,
       this.queryConfig,
+    );
+    // Pós-fetch (o findAll com params sobrescreve o `where`): nota interna só aparece nos fluxos de internal/.
+    const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
+    const rows = fetchedRows.filter(
+      (invoice) => !internalOperationId || invoice.invoice_operation_id !== internalOperationId,
     );
 
     const supplierDiscountLookup = await this.buildSupplierDiscountLookup(

@@ -20,6 +20,13 @@ import type {
   InvoiceOperationalItemFromXml,
   UnmappedInvoiceItemFromXml,
 } from "../../../../../../../shared/utils/xml/invoice-xml";
+import sequelize from "../../../../../../../config/sequelize";
+import expeditionBatchService from "../../../../../expedition/batch/batch.service";
+import ExpeditionBatch from "../../../../../expedition/batch/batch.model";
+import batchItemsService from "../../../../../expedition/batch-items/batch-items.service";
+import batchInvoiceItemsService from "../../../../../expedition/batch-invoice-items/batch-invoice-items.service";
+import scanLogsService from "../../../../../expedition/scan-logs/scan-logs.service";
+import productService from "../../../../../../inventory/products/services/product.service";
 import { buildInternalInvoiceIdSystem } from "../helpers/internal-invoice-id";
 import { buildInternalInvoiceItems } from "../helpers/internal-fiscal-items";
 
@@ -176,6 +183,116 @@ export class InternalInvoiceService extends BaseService<Invoice, InternalInvoice
     await this.syncUnmappedProducts(invoiceId, integrationsId, params.unmappedItems);
     console.log(`[INTERNAL_INVOICE] Nota interna upsertada: id_system=${idSystem}`);
     return invoiceId;
+  }
+
+  // Lote só de nota interna (generate atual com a flag interna: recusa NF-e e grava is_internal).
+  async generateInternalBatch(
+    invoiceIds: string[],
+    unitBusinessId: string,
+    type: string,
+    mode?: string,
+  ): Promise<ExpeditionBatch> {
+    return expeditionBatchService.generateBatchFromInvoices(invoiceIds, unitBusinessId, type, mode, undefined, {
+      internal: true,
+    });
+  }
+
+  // Finaliza lote interno pelo finalizar atual (conferência Tecinco pela chave composta da filial).
+  async finishInternalBatch(batchId: string, justification: string, user: unknown) {
+    return expeditionBatchService.finishBatch(batchId, justification, user, { internal: true });
+  }
+
+  // O que falta ler por nota no item do lote (no lugar dos volumes do XML, que a nota interna não tem).
+  async findInternalBatchPending(
+    batchItemId: string,
+  ): Promise<Array<{ productName: string | null; invoiceNumberSystem: string | null; pendingQuantity: number }>> {
+    const rows = (await batchInvoiceItemsService.findPendingByBatchItemId(batchItemId)) as any[];
+    return rows.map((row) => ({
+      productName: row.batchItem?.product?.name ?? null,
+      invoiceNumberSystem: row.batchInvoice?.invoice?.number_system ?? null,
+      pendingQuantity: Number(row.quantity_expected) - Number(row.quantity_read),
+    }));
+  }
+
+  // Bipagem do lote interno só por EAN (sem etiqueta): reparte a quantidade entre as notas do lote que ainda têm o produto a ler.
+  async scanInternalBatchProduct(params: {
+    productCode: string;
+    batchId: string;
+    quantity?: number;
+    userId: string;
+    type: "OUTGOING" | "INCOMING";
+  }): Promise<true> {
+    const { productCode, batchId, userId, type } = params;
+    const quantity = Number(params.quantity ?? 1);
+    if (!Number.isInteger(quantity) || quantity <= 0) throw new Error("Quantidade inválida");
+
+    return sequelize.transaction(async (t) => {
+      const batch = await expeditionBatchService.findById(batchId, {
+        attributes: ["id", "unit_business_id", "type", "status", "is_internal"],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!batch) throw new Error("Lote não encontrado");
+      if (!batch.is_internal) throw new Error("Lote não é de nota interna");
+      if (batch.type !== type) throw new Error(`Lote não é de ${type === "OUTGOING" ? "saída" : "entrada"}`);
+      if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
+
+      const found = await productService.findByCode(productCode, batch.unit_business_id, { transaction: t });
+      if (!found) throw new Error("Produto não encontrado!");
+
+      const batchItem = await batchItemsService.findOne({
+        where: { expedition_batch_id: batchId, product_id: found.product.id },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!batchItem) throw new Error("Produto não está nas notas deste lote");
+
+      // Uma linha por nota do lote com esse produto, na ordem de entrada no lote.
+      const invoiceItems = await batchInvoiceItemsService.findAll({
+        where: { expedition_batch_item_id: batchItem.id },
+        order: [["createdAt", "ASC"]],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      const deltas = new Map<string, number>();
+      let remaining = quantity;
+      for (const item of invoiceItems) {
+        if (remaining <= 0) break;
+        const space = Number(item.quantity_expected) - Number(item.quantity_read);
+        if (space <= 0) continue;
+        const take = Math.min(remaining, space);
+        deltas.set(item.expedition_batch_invoice_id, (deltas.get(item.expedition_batch_invoice_id) ?? 0) + take);
+        remaining -= take;
+      }
+      // Saída nunca passa do esperado; entrada aceita a sobra na última nota (mesma regra do scan de entrada atual).
+      if (remaining > 0) {
+        if (type === "OUTGOING" || !invoiceItems.length) {
+          throw new Error(`Quantidade informada (${quantity}) excede o restante a bipar (${quantity - remaining})`);
+        }
+        const lastId = invoiceItems[invoiceItems.length - 1].expedition_batch_invoice_id;
+        deltas.set(lastId, (deltas.get(lastId) ?? 0) + remaining);
+      }
+
+      const scanLogs = [...deltas].flatMap(([batchInvoiceId, delta]) =>
+        Array.from({ length: delta }, () => ({
+          expedition_batch_id: batchId,
+          expedition_batch_items_id: batchItem.id,
+          expedition_batch_invoices_id: batchInvoiceId,
+          label_full_code: productCode,
+          vol_number: "000000",
+          user_id: userId,
+        })),
+      );
+      await scanLogsService.bulkCreate(scanLogs as any, { transaction: t });
+      // Mesma transação: o Sequelize serializa as queries na conexão dela.
+      await Promise.all(
+        [...deltas].map(([batchInvoiceId, delta]) =>
+          scanLogsService.syncFromScanning(batchId, batchItem.id, batchInvoiceId, delta, t),
+        ),
+      );
+      return true as const;
+    });
   }
 
   // Reconcilia os não mapeados da nota com esta passagem (regra do invoice-xml.ts, em lote): UNMAPPED que sumiu é apagado, o resto criado/atualizado.

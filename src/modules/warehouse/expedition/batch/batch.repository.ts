@@ -224,6 +224,8 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
         unit_business_id: unitBusinessId,
         type: "OUTGOING",
         status: { [Op.in]: ["OPEN", "PENDING"] },
+        // Lote de nota interna nunca recebe nota do PDV.
+        is_internal: false,
         [Op.and]: !transporter ? [] : [
           literal(`(
             EXISTS (

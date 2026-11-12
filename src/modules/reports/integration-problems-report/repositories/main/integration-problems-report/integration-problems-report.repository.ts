@@ -6,7 +6,9 @@ import {
   outputMovementsWhere,
   unitBusinessPeriodWhere,
 } from "../../../../../../shared/query/query-objects/stock-movements/stock-movement.filters";
-import { invoiceCancelledSql } from "../../../../../warehouse/fiscal/invoices/invoice";
+import { invoiceCancelledSql, notInternalInvoiceSql } from "../../../../../warehouse/fiscal/invoices/invoice";
+import invoiceOperationRepository from "../../../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.repository";
+import { INVOICE_OPERATION_CODES } from "../../../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.types";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import {
   SaleInvoiceWithoutMovementRow,
@@ -120,6 +122,7 @@ export class IntegrationProblemsReportRepository {
     start: Date,
     end: Date,
   ): Promise<SaleInvoiceWithoutMovementRow[]> {
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
     return sequelize.query<SaleInvoiceWithoutMovementRow>(
       `
       WITH candidates AS (
@@ -130,6 +133,8 @@ export class IntegrationProblemsReportRepository {
           ON a.invoice_id = i.id AND a.unit_business_id = ub.id
          AND a.type = 'OUTGOING' AND a.status IN (:statuses)
         WHERE i.emitted_at BETWEEN :start AND :end
+          -- Nota interna não é venda (só aparece nos fluxos de internal/).
+          AND ${notInternalInvoiceSql(internalOperationId, "i.invoice_operation_id")}
       ),
       moved AS (
         ${movementInvoiceIdsSql("m.unit_business_id = :unitBusinessId AND m.is_active AND m.movement_type = 'SALE_OUT'")}

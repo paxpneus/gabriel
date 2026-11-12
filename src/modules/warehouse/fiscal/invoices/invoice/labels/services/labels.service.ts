@@ -11,6 +11,7 @@ import CarrierLabelRange from "../../../../../transporter/carrier-label-ranges/c
 import InvoiceItems from "../../../invoice-items/invoice-items.model";
 import { Product, ProductConfig } from "../../../../../../inventory";
 import supplierMappingService from "../../../../../../inventory/supplier-mapping/supplier-mapping.service";
+import { internalInvoiceScopeService } from "../../shared";
 
 // Importe seus modelos e a instância do sequelize se necessário
 // import { Invoice } from '../../database/models/Invoice';
@@ -253,6 +254,8 @@ export class LabelService {
     unitBusinessId: string,
     opts: { cursor?: string; limit: number },
   ): Promise<{ data: LabelDataDTO[]; nextCursor?: string; totalVolumes?: number }> {
+    // Nota interna não tem etiqueta (só pelos fluxos de internal/).
+    await internalInvoiceScopeService.assertNotInternalInvoices({ id: invoiceIds });
     const { invoiceIndex: startIndex, volumeOffset: startOffset } = this.decodeCursor(opts.cursor);
 
     const totalVolumes =

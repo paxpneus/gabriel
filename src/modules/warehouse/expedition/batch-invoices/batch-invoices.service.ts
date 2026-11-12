@@ -2,7 +2,7 @@ import { Op, Transaction } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import invoiceItemsService from "../../fiscal/invoices/invoice-items/invoice-items.service";
-import { invoiceService } from "../../fiscal/invoices/invoice";
+import { invoiceService, INTERNAL_BATCH_REFUSED_MESSAGE } from "../../fiscal/invoices/invoice";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import ExpeditionBatch from "../batch/batch.model";
 import scanLogsService from "../scan-logs/scan-logs.service";
@@ -49,9 +49,11 @@ export class ExpeditionBatchInvoiceService extends BaseService<
     return this.repository.findBatchIdsByInvoiceIds(invoiceIds, unitBusinessId, type);
   }
 
+  // options.allowInternal: só o cancelamento da nota tira nota de lote interno; a rota atual recusa.
   async removeBatchInvoice(
     id: string,
     externalTransaction?: Transaction,
+    options: { allowInternal?: boolean } = {},
   ): Promise<void> {
     const run = async (t: Transaction) => {
       const batchInvoice = (await this.findById(id, {
@@ -69,6 +71,10 @@ export class ExpeditionBatchInvoiceService extends BaseService<
 
       if (!expeditionBatch) {
         throw new Error(`Lote não encontrado!`);
+      }
+
+      if (expeditionBatch.is_internal && !options.allowInternal) {
+        throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
       }
 
       if (CLOSED_EXPEDITION_BATCH_STATUSES.includes(expeditionBatch.status)) {

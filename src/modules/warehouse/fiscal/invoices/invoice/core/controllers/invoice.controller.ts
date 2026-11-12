@@ -8,6 +8,7 @@ import { getUserContext } from "../../../../../../../shared/query/get-logged-use
 import { assertUuid } from "../../../../../../../shared/utils/validators/uuid";
 import {
   extractUnitBusinessIdFromRequest,
+  internalInvoiceScopeService,
   resolveUnitBusinessId,
 } from "../../shared";
 
@@ -140,6 +141,8 @@ export class InvoiceController extends BaseController<
         req,
         context.unitBusinessId,
       );
+      // PUT /:id: nota interna só pelos fluxos de internal/ (updateInvoices em si segue aberto pro lote/scan internos).
+      await internalInvoiceScopeService.assertNotInternalInvoices({ id: req.params.id as string });
       await this.service.updateInvoices(
         [req.params.id as string],
         unitBusinessId,

@@ -44,6 +44,9 @@ jest.mock("../../../fiscal/invoices/invoice", () => ({
   ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/bling-entrance-url"),
   ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/transfer-reference"),
   ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/totals"),
+  ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/invoice-operation"),
+  // Sem operação interna cadastrada: guarda de nota interna não interfere nos cenários daqui.
+  internalInvoiceScopeService: { getInternalOperationId: async () => null },
   invoiceService: { findAll: jest.fn(), findOne: jest.fn() },
   transferReferenceService: { findTransfersToReceiverByNumbers: jest.fn() },
 }));

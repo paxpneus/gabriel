@@ -42,7 +42,7 @@ import orderService from "../../orders/order/orders.service";
 import paymentMethodService from "../../orders/payment_method/payment_method.service";
 import expeditionBatchService from "../../../warehouse/expedition/batch/batch.service";
 import { buildExpeditionProgress } from "./helpers/expedition-progress";
-import { invoiceCancellationService, invoiceDocumentsService, invoiceIngestionService, invoiceService, transferReferenceService, buildInvoiceReferenceDescription, normalizeInvoiceNumber } from "../../../warehouse/fiscal/invoices/invoice";
+import { invoiceCancellationService, invoiceDocumentsService, invoiceIngestionService, invoiceService, transferReferenceService, buildInvoiceReferenceDescription, normalizeInvoiceNumber, internalInvoiceScopeService, notInternalInvoiceWhere } from "../../../warehouse/fiscal/invoices/invoice";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import roleService from "../../../company/users/roles/role.service";
@@ -2266,8 +2266,12 @@ export class PdvSalesRequestService extends BaseService<
   async searchTransferInvoiceCandidates(query: string) {
     if (!query || query.trim().length < 2) return [];
 
-    const tecinco = await getTCarIntegration();
+    const [tecinco, internalOperationId] = await Promise.all([
+      getTCarIntegration(),
+      internalInvoiceScopeService.getInternalOperationId(),
+    ]);
 
+    // Nota interna não serve como nota de transferência da venda.
     return invoiceService.findAll({
       where: {
         integrations_id: tecinco.id,
@@ -2275,6 +2279,7 @@ export class PdvSalesRequestService extends BaseService<
           { number_system: { [Op.iLike]: `%${query}%` } },
           { id_system: { [Op.iLike]: `%${query}%` } },
         ],
+        ...notInternalInvoiceWhere(internalOperationId),
       },
       attributes: [
         "id",
@@ -2508,6 +2513,11 @@ export class PdvSalesRequestService extends BaseService<
       throw new Error(
         "A nota de transferência precisa ser da integração Tecinco",
       );
+    }
+    // Nota interna (série B) é entre lojas, mas não serve como nota de transferência da venda.
+    const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
+    if (internalOperationId && invoice.invoice_operation_id === internalOperationId) {
+      throw new Error("Nota interna não serve como nota de transferência da venda.");
     }
 
     // Vale pra todo caminho (id, XML, DANFE); provisória antiga sem destinatário gravado só confere o emitente.

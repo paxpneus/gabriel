@@ -1,5 +1,8 @@
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
+import { notInternalInvoiceSql } from "../../../warehouse/fiscal/invoices/invoice";
+import invoiceOperationRepository from "../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.repository";
+import { INVOICE_OPERATION_CODES } from "../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.types";
 import {
   AffectedFactKey,
   AffectedTransporterFactKey,
@@ -155,6 +158,7 @@ export class DailyOperationReportRepository {
    * equivalentes que existiam direto em invoices/invoice_items.
    */
   async findAffectedInvoiceIds(lastProcessedAt: Date): Promise<string[]> {
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
     const rows = await sequelize.query<InvoiceIdRow>(
       `
       SELECT DISTINCT invoice_id
@@ -203,6 +207,12 @@ export class DailyOperationReportRepository {
         WHERE eb.updated_at >= :lastProcessedAt
       ) affected
       WHERE invoice_id IS NOT NULL
+        -- Nota interna fica fora da operação diária (só aparece nos fluxos de internal/).
+        AND NOT EXISTS (
+          SELECT 1 FROM invoices i_internal
+          WHERE i_internal.id = affected.invoice_id
+            AND NOT (${notInternalInvoiceSql(internalOperationId, "i_internal.invoice_operation_id")})
+        )
       `,
       {
         type: QueryTypes.SELECT,
@@ -814,6 +824,7 @@ export class DailyOperationReportRepository {
   async findAffectedInvoiceUnitBusinessKeys(
     lastProcessedAt: Date,
   ): Promise<InvoiceUnitBusinessKeyRow[]> {
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
     const rows = await sequelize.query<InvoiceUnitBusinessKeyRow>(
       `
       SELECT DISTINCT iuba.invoice_id, iuba.unit_business_id
@@ -864,6 +875,12 @@ export class DailyOperationReportRepository {
       JOIN invoice_unit_business_attributes iuba
         ON iuba.invoice_id = affected.invoice_id
       WHERE affected.invoice_id IS NOT NULL
+        -- Nota interna fica fora da operação diária (só aparece nos fluxos de internal/).
+        AND NOT EXISTS (
+          SELECT 1 FROM invoices i_internal
+          WHERE i_internal.id = affected.invoice_id
+            AND NOT (${notInternalInvoiceSql(internalOperationId, "i_internal.invoice_operation_id")})
+        )
       `,
       {
         type: QueryTypes.SELECT,

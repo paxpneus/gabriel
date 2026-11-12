@@ -78,6 +78,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
     const fortyFiveDaysAgo = new Date(now);
     fortyFiveDaysAgo.setDate(fortyFiveDaysAgo.getDate() - 45);
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
 
     return Invoice.findAll({
       subQuery: false,
@@ -138,6 +139,8 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       ],
       where: {
         [Op.and]: [
+          // Nota interna não tem rastreio de transportadora (fluxo próprio em internal/).
+          notInternalInvoiceWhere(internalOperationId),
           // A unit business "dona" (OUTGOING) precisa ser a mesma cujo cnpj
           // emitiu a nota (sender_cnpj)
           Sequelize.where(
@@ -575,8 +578,11 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   async countPendingBatchByTransporter(
     unitBusinessId: string,
   ): Promise<PendingBatchByTransporterRow[]> {
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
     const rows = (await this.model.findAll({
       subQuery: false,
+      // Nota interna vai pro lote pela tela própria; não entra no card por transportadora.
+      where: notInternalInvoiceWhere(internalOperationId),
       attributes: [
         "transporter_id",
         [col("transporter.name"), "transporter_name"],

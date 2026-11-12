@@ -298,3 +298,9 @@ export function invoiceCancelledSql(invoiceIdColumn: string): string {
       AND iuba_cancelled.status = '${cancelled}'
   )`;
 }
+
+// SQL cru: tira a nota interna (invoice_operation_id = interna) e mantém null; sem a operação cadastrada não filtra. Coluna vem do código.
+export function notInternalInvoiceSql(internalOperationId: string | null, operationColumn: string): string {
+  if (!internalOperationId) return "TRUE";
+  return `${operationColumn} IS DISTINCT FROM ${sequelize.escape(internalOperationId)}`;
+}

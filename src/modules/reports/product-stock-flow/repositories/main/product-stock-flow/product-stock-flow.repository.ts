@@ -1,6 +1,9 @@
 import { Op, QueryTypes, WhereOptions } from "sequelize";
 import sequelize from "../../../../../../config/sequelize";
 import { APP_TIMEZONE } from "../../../../../../shared/utils/normalizers/date";
+import { notInternalInvoiceSql } from "../../../../../warehouse/fiscal/invoices/invoice";
+import invoiceOperationRepository from "../../../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.repository";
+import { INVOICE_OPERATION_CODES } from "../../../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.types";
 import StockMovement from "../../../../../inventory/stock/stock-movements/stock-movements.model";
 import {
   customerReturnMovementsWhere,
@@ -49,6 +52,7 @@ export class ProductStockFlowRepository {
     productIds?: string[],
   ): Promise<ProductStockFlowInputRow[]> {
     if (productIds && !productIds.length) return [];
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
 
     const productFilter = productIds
       ? "AND m.product_id = ANY(string_to_array(:productIds, ',')::uuid[])"
@@ -65,6 +69,8 @@ export class ProductStockFlowRepository {
         WHERE uba.unit_business_id = :unitBusinessId
           AND uba.type = 'INCOMING'
           AND i.emitted_at IS NOT NULL
+          -- Nota interna com o mesmo número não é a entrada do movimento.
+          AND ${notInternalInvoiceSql(internalOperationId, "i.invoice_operation_id")}
         GROUP BY i.number_system
       ),
       mv AS (

@@ -83,6 +83,8 @@ jest.mock("../../../../warehouse/fiscal/invoices/invoice", () => ({
   // Helpers puros da fachada seguem reais; só os services são mockados.
   ...jest.requireActual("../../../../warehouse/fiscal/invoices/invoice/shared/helpers/reference-description"),
   ...jest.requireActual("../../../../warehouse/fiscal/invoices/invoice/shared/helpers/custom-filters"),
+  ...jest.requireActual("../../../../warehouse/fiscal/invoices/invoice/shared/helpers/invoice-operation"),
+  internalInvoiceScopeService: { getInternalOperationId: jest.fn().mockResolvedValue("op-internal") },
   invoiceService: { findById: jest.fn(), findOne: jest.fn(), findAll: jest.fn(), findDeliveryNoteGeneratedInvoiceIds: jest.fn(), update: jest.fn() },
   invoiceIngestionService: { createStub: jest.fn() },
   transferReferenceService: { assertTransferReferences: jest.fn() },
@@ -2945,6 +2947,41 @@ describe("PdvSalesRequestService", () => {
   });
 
   describe("attachTransferInvoice", () => {
+    it("nota interna (série B) não vira nota de transferência da venda", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        sale_invoice_id: "invoice-sale",
+        transfer_invoice_id: null,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-internal",
+        integrations_id: "tecinco-1",
+        invoice_operation_id: "op-internal",
+        number_system: "882",
+        sender_cnpj: "02316749001220",
+        receiver_cnpj: "02316749002464",
+      });
+
+      await expect(
+        service.attachTransferInvoice("r1", { invoiceId: "invoice-internal", tcarUpsertQueue: {} as any }),
+      ).rejects.toThrow("Nota interna não serve como nota de transferência da venda.");
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("busca de nota de transferência não traz nota interna", async () => {
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([]);
+
+      await service.searchTransferInvoiceCandidates("882");
+
+      const where = (invoiceService.findAll as jest.Mock).mock.calls[0][0].where;
+      expect(where).toMatchObject({ integrations_id: "tecinco-1" });
+      expect(where.invoice_operation_id).toBeDefined();
+    });
+
     it("1 venda ↔ 1 transferência: valida a nota escolhida contra a nota de venda antes de vincular", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",

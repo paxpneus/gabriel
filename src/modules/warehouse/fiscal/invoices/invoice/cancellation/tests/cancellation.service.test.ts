@@ -192,7 +192,7 @@ describe("InvoiceCancellationService.bondReturnInvoice", () => {
 
     await invoiceCancellationService.bondReturnInvoice(RETURN_INVOICE, REF_KEY);
 
-    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction);
+    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction, { allowInternal: true });
     expect(removeBatchInvoice.mock.invocationCallOrder[0]).toBeLessThan(
       repo.updateWithAttributesForAllUnits.mock.invocationCallOrder[0],
     );
@@ -239,7 +239,7 @@ describe("InvoiceCancellationService.cancelInvoice", () => {
 
     await invoiceCancellationService.cancelInvoice("outgoing-1");
 
-    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction);
+    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction, { allowInternal: true });
     expect(removeBatchInvoice.mock.invocationCallOrder[0]).toBeLessThan(
       repo.updateWithAttributesForAllUnits.mock.invocationCallOrder[0],
     );
@@ -252,8 +252,8 @@ describe("InvoiceCancellationService.cancelInvoice", () => {
 
     await invoiceCancellationService.cancelInvoice("outgoing-1");
 
-    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction);
-    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-2", fakeTransaction);
+    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction, { allowInternal: true });
+    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-2", fakeTransaction, { allowInternal: true });
     expect(
       Math.max(...removeBatchInvoice.mock.invocationCallOrder),
     ).toBeLessThan(repo.updateWithAttributesForAllUnits.mock.invocationCallOrder[0]);
@@ -266,7 +266,7 @@ describe("InvoiceCancellationService.cancelInvoice", () => {
 
     await invoiceCancellationService.cancelInvoice("outgoing-1");
 
-    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction);
+    expect(removeBatchInvoice).toHaveBeenCalledWith("bi-1", fakeTransaction, { allowInternal: true });
   });
 
   it("em lote finalizado: mantém no lote e cancela", async () => {

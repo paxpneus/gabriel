@@ -3,7 +3,7 @@ import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import { Product, ProductConfig } from "../../../inventory";
 import Invoice from "../../fiscal/invoices/invoice/invoice.model";
-import { invoiceService, labelService, LabelVolume } from "../../fiscal/invoices/invoice";
+import { invoiceService, labelService, LabelVolume, INTERNAL_BATCH_REFUSED_MESSAGE } from "../../fiscal/invoices/invoice";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import batchItemsService, {
@@ -119,7 +119,8 @@ export class ExpeditionScanLogService extends BaseService<
    * @param delta          - quantidade a incrementar (positivo) ou decrementar (negativo)
    * @param t              - transação ativa
    */
-  private async syncFromScanning(
+  // Público pro scan da nota interna (internal/), que grava os próprios scan logs e sincroniza por aqui.
+  async syncFromScanning(
     batchId: string,
     batchItemId: string,
     batchInvoiceId: string,
@@ -270,6 +271,8 @@ export class ExpeditionScanLogService extends BaseService<
       if (!invoiceRead || !invoiceRead.batchInvoices?.length) {
         throw new Error("Nota não encontrada no lote");
       }
+      // Lote de nota interna só é bipado pelas rotas de internal/ (por EAN, sem etiqueta).
+      if (invoiceRead.is_internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
 
       const batchInvoice = invoiceRead.batchInvoices[0];
 
@@ -393,6 +396,8 @@ export class ExpeditionScanLogService extends BaseService<
       });
 
       if (!batch) throw new Error("Lote não encontrado");
+      // Lote de nota interna só é bipado pelas rotas de internal/.
+      if (batch.is_internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
@@ -545,6 +550,8 @@ export class ExpeditionScanLogService extends BaseService<
       });
 
       if (!batch) throw new Error("Lote não encontrado");
+      // Lote de nota interna só é bipado pelas rotas de internal/.
+      if (batch.is_internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
@@ -645,6 +652,8 @@ export class ExpeditionScanLogService extends BaseService<
       });
 
       if (!batch) throw new Error("Lote não encontrado");
+      // Lote de nota interna só é bipado pelas rotas de internal/.
+      if (batch.is_internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
       if (batch.type === "INCOMING") throw new Error("Lote não é de saída");
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
@@ -744,6 +753,8 @@ export class ExpeditionScanLogService extends BaseService<
       });
 
       if (!batch) throw new Error("Lote não encontrado");
+      // Lote de nota interna só é bipado pelas rotas de internal/.
+      if (batch.is_internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
       if (batch.type === "INCOMING") throw new Error("Lote não é de saída");
 
       for (const item of items) {
@@ -835,6 +846,8 @@ export class ExpeditionScanLogService extends BaseService<
       });
 
       if (!batch) throw new Error("Lote não encontrado");
+      // Lote de nota interna só é bipado pelas rotas de internal/.
+      if (batch.is_internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
 
       for (const item of items) {

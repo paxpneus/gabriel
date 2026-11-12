@@ -2,9 +2,12 @@ import { col, fn, Op, Sequelize } from "sequelize";
 import BaseRepository from "../../../../../../../shared/utils/base-models/base-repository";
 import Invoice from "../../invoice.model";
 import { invoiceCancelledSql } from "../helpers/custom-filters";
+import { notInternalInvoiceWhere } from "../helpers/invoice-operation";
 import invoiceAttributesRepository from "./invoice-attributes.repository";
+import invoiceOperationRepository from "../../../invoice-operation/invoice-operation.repository";
+import { INVOICE_OPERATION_CODES } from "../../../invoice-operation/invoice-operation.types";
 
-// Consultas de nota de transferência / referência de transferência (validação 1 venda ↔ 1 transferência).
+// Consultas de nota de transferência / referência de transferência (validação 1 venda ↔ 1 transferência). Nota interna nunca conta.
 export class TransferReferenceRepository extends BaseRepository<Invoice> {
   constructor() {
     super(Invoice);
@@ -14,7 +17,10 @@ export class TransferReferenceRepository extends BaseRepository<Invoice> {
   // definição de listTransferInvoices; real ou provisória (createStub do PDV já grava os dois CNPJs).
   async findExistingTransferNumbers(numbers: string[]): Promise<Set<string>> {
     if (!numbers.length) return new Set();
-    const unitBusinessCnpjs = await invoiceAttributesRepository.findAllUnitBusinessCnpjs();
+    const [unitBusinessCnpjs, internalOperationId] = await Promise.all([
+      invoiceAttributesRepository.findAllUnitBusinessCnpjs(),
+      invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER),
+    ]);
     const normalizedNumber = fn("LTRIM", col("number_system"), "0");
     const rows = await this.model.findAll({
       attributes: [[normalizedNumber, "normalized_number"]],
@@ -24,6 +30,7 @@ export class TransferReferenceRepository extends BaseRepository<Invoice> {
           { sender_cnpj: { [Op.in]: unitBusinessCnpjs } },
           { receiver_cnpj: { [Op.in]: unitBusinessCnpjs } },
           Sequelize.where(col("sender_cnpj"), Op.ne, col("receiver_cnpj")),
+          notInternalInvoiceWhere(internalOperationId),
         ],
       },
       group: [normalizedNumber],
@@ -39,7 +46,10 @@ export class TransferReferenceRepository extends BaseRepository<Invoice> {
     receiverCnpj: string,
   ): Promise<Array<{ id: string; number_system: string; normalized_number: string }>> {
     if (!numbers.length) return [];
-    const unitBusinessCnpjs = await invoiceAttributesRepository.findAllUnitBusinessCnpjs();
+    const [unitBusinessCnpjs, internalOperationId] = await Promise.all([
+      invoiceAttributesRepository.findAllUnitBusinessCnpjs(),
+      invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER),
+    ]);
     const normalizedNumber = fn("LTRIM", col("number_system"), "0");
     const rows = await this.model.findAll({
       attributes: ["id", "number_system", [normalizedNumber, "normalized_number"]],
@@ -47,6 +57,7 @@ export class TransferReferenceRepository extends BaseRepository<Invoice> {
         [Op.and]: [
           Sequelize.where(normalizedNumber, { [Op.in]: numbers }),
           { sender_cnpj: { [Op.in]: unitBusinessCnpjs, [Op.ne]: receiverCnpj }, receiver_cnpj: receiverCnpj },
+          notInternalInvoiceWhere(internalOperationId),
         ],
       },
       raw: true,
@@ -60,6 +71,7 @@ export class TransferReferenceRepository extends BaseRepository<Invoice> {
     numbers: string[],
   ): Promise<Array<{ id: string; number_system: string; transfer_number: string }>> {
     if (!numbers.length) return [];
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
     const transferNumber = fn("LTRIM", fn("SUBSTRING", col("transfer_invoice_reference"), "\\d+"), "0");
     const rows = await this.model.findAll({
       attributes: ["id", "number_system", [transferNumber, "transfer_number"]],
@@ -67,6 +79,7 @@ export class TransferReferenceRepository extends BaseRepository<Invoice> {
         [Op.and]: [
           Sequelize.where(transferNumber, { [Op.in]: numbers }),
           Sequelize.literal(`NOT ${invoiceCancelledSql('"Invoice"."id"')}`),
+          notInternalInvoiceWhere(internalOperationId),
         ],
       },
       raw: true,

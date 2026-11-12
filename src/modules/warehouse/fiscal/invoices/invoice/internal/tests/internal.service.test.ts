@@ -40,7 +40,40 @@ jest.mock("../../../../../transporter/transporter.service", () => ({
   default: { resolveTransporter: jest.fn() },
 }));
 
+const fakeTransaction = { LOCK: { UPDATE: "UPDATE" } };
+jest.mock("../../../../../../../config/sequelize", () => ({
+  __esModule: true,
+  default: { transaction: jest.fn((run: (t: unknown) => unknown) => run(fakeTransaction)) },
+}));
+
+jest.mock("../../../../../expedition/batch/batch.service", () => ({
+  __esModule: true,
+  default: { generateBatchFromInvoices: jest.fn(), finishBatch: jest.fn(), findById: jest.fn() },
+}));
+jest.mock("../../../../../expedition/batch/batch.model", () => ({ __esModule: true, default: class {} }));
+jest.mock("../../../../../expedition/batch-items/batch-items.service", () => ({
+  __esModule: true,
+  default: { findOne: jest.fn() },
+}));
+jest.mock("../../../../../expedition/batch-invoice-items/batch-invoice-items.service", () => ({
+  __esModule: true,
+  default: { findAll: jest.fn(), findPendingByBatchItemId: jest.fn() },
+}));
+jest.mock("../../../../../expedition/scan-logs/scan-logs.service", () => ({
+  __esModule: true,
+  default: { bulkCreate: jest.fn(), syncFromScanning: jest.fn() },
+}));
+jest.mock("../../../../../../inventory/products/services/product.service", () => ({
+  __esModule: true,
+  default: { findByCode: jest.fn() },
+}));
+
 import { invoiceAttributesRepository, invoiceCreationService } from "../../shared";
+import expeditionBatchService from "../../../../../expedition/batch/batch.service";
+import batchItemsService from "../../../../../expedition/batch-items/batch-items.service";
+import batchInvoiceItemsService from "../../../../../expedition/batch-invoice-items/batch-invoice-items.service";
+import scanLogsService from "../../../../../expedition/scan-logs/scan-logs.service";
+import productService from "../../../../../../inventory/products/services/product.service";
 import internalInvoiceRepository from "../repositories/internal.repository";
 import invoiceOperationRepository from "../../../invoice-operation/invoice-operation.repository";
 import unmappedInvoiceProductService from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
@@ -268,5 +301,118 @@ describe("InternalInvoiceService.listInternalInvoices", () => {
 
     await expect(internalInvoiceService.listInternalInvoices({} as any)).rejects.toThrow("seed da m351");
     expect(repository.listInternalInvoices).not.toHaveBeenCalled();
+  });
+});
+
+describe("InternalInvoiceService — lote da nota interna", () => {
+  const batches = expeditionBatchService as jest.Mocked<typeof expeditionBatchService>;
+  const findItem = batchItemsService.findOne as jest.Mock;
+  const findInvoiceItems = batchInvoiceItemsService.findAll as jest.Mock;
+  const findByCode = productService.findByCode as jest.Mock;
+  const bulkCreate = scanLogsService.bulkCreate as jest.Mock;
+  const sync = scanLogsService.syncFromScanning as jest.Mock;
+
+  // Lote interno de saída com o produto em 2 notas: bi-1 (4 esperados, 3 lidos) e bi-2 (2 esperados, nada lido).
+  function arrangeOutgoingBatch(overrides: Record<string, unknown> = {}) {
+    (batches.findById as jest.Mock).mockResolvedValue({
+      id: "batch-1",
+      unit_business_id: "ub-12",
+      type: "OUTGOING",
+      status: "OPEN",
+      is_internal: true,
+      ...overrides,
+    });
+    findByCode.mockResolvedValue({ product: { id: "product-1" }, matchedCode: "789" });
+    findItem.mockResolvedValue({ id: "item-1" });
+    findInvoiceItems.mockResolvedValue([
+      { expedition_batch_invoice_id: "bi-1", quantity_expected: 4, quantity_read: 3 },
+      { expedition_batch_invoice_id: "bi-2", quantity_expected: 2, quantity_read: 0 },
+    ]);
+  }
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it("generate passa a flag interna pro generate atual", async () => {
+    await internalInvoiceService.generateInternalBatch(["inv-1"], "ub-12", "OUTGOING", "REGULAR");
+
+    expect(batches.generateBatchFromInvoices).toHaveBeenCalledWith(["inv-1"], "ub-12", "OUTGOING", "REGULAR", undefined, {
+      internal: true,
+    });
+  });
+
+  it("finalizar passa a flag interna pro finalizar atual", async () => {
+    const user = { id: "u-1" };
+    await internalInvoiceService.finishInternalBatch("batch-1", "ok", user);
+
+    expect(batches.finishBatch).toHaveBeenCalledWith("batch-1", "ok", user, { internal: true });
+  });
+
+  it("scan de saída por EAN reparte entre as notas na ordem e sincroniza cada uma", async () => {
+    arrangeOutgoingBatch();
+
+    await internalInvoiceService.scanInternalBatchProduct({
+      productCode: "789",
+      batchId: "batch-1",
+      quantity: 3,
+      userId: "u-1",
+      type: "OUTGOING",
+    });
+
+    expect(findByCode).toHaveBeenCalledWith("789", "ub-12", { transaction: fakeTransaction });
+    const logs = bulkCreate.mock.calls[0][0] as any[];
+    expect(logs.map((log) => log.expedition_batch_invoices_id)).toEqual(["bi-1", "bi-2", "bi-2"]);
+    expect(logs[0]).toMatchObject({ vol_number: "000000", label_full_code: "789", user_id: "u-1", expedition_batch_items_id: "item-1" });
+    expect(sync.mock.calls.map(([, , biId, delta]) => [biId, delta])).toEqual([
+      ["bi-1", 1],
+      ["bi-2", 2],
+    ]);
+  });
+
+  it("scan de saída acima do restante é recusado sem gravar", async () => {
+    arrangeOutgoingBatch();
+
+    await expect(
+      internalInvoiceService.scanInternalBatchProduct({ productCode: "789", batchId: "batch-1", quantity: 4, userId: "u-1", type: "OUTGOING" }),
+    ).rejects.toThrow("excede o restante a bipar (3)");
+    expect(bulkCreate).not.toHaveBeenCalled();
+  });
+
+  it("scan de entrada aceita sobra na última nota (mesma regra do scan de entrada atual)", async () => {
+    arrangeOutgoingBatch({ type: "INCOMING" });
+
+    await internalInvoiceService.scanInternalBatchProduct({ productCode: "789", batchId: "batch-1", quantity: 5, userId: "u-1", type: "INCOMING" });
+
+    expect(sync.mock.calls.map(([, , biId, delta]) => [biId, delta])).toEqual([
+      ["bi-1", 1],
+      ["bi-2", 4],
+    ]);
+  });
+
+  it.each([
+    ["lote de NF-e", { is_internal: false }, "Lote não é de nota interna"],
+    ["tipo errado", { type: "INCOMING" }, "Lote não é de saída"],
+    ["lote finalizado", { status: "FINISHED" }, "Lote já finalizado"],
+  ])("scan recusa %s", async (_label, overrides, message) => {
+    arrangeOutgoingBatch(overrides);
+
+    await expect(
+      internalInvoiceService.scanInternalBatchProduct({ productCode: "789", batchId: "batch-1", userId: "u-1", type: "OUTGOING" }),
+    ).rejects.toThrow(message);
+    expect(bulkCreate).not.toHaveBeenCalled();
+  });
+
+  it("pendências por nota no item do lote", async () => {
+    (batchInvoiceItemsService.findPendingByBatchItemId as jest.Mock).mockResolvedValue([
+      {
+        quantity_expected: 4,
+        quantity_read: 1,
+        batchItem: { product: { name: "PNEU 185/60R15" } },
+        batchInvoice: { invoice: { number_system: "882" } },
+      },
+    ]);
+
+    await expect(internalInvoiceService.findInternalBatchPending("item-1")).resolves.toEqual([
+      { productName: "PNEU 185/60R15", invoiceNumberSystem: "882", pendingQuantity: 3 },
+    ]);
   });
 });

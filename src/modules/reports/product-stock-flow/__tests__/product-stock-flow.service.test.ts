@@ -1,6 +1,11 @@
 import { Op } from "sequelize";
 import { ProductStockFlowService } from "../services/main/product-stock-flow/product-stock-flow.service";
 
+// Fachada de invoice real abre Redis/BullMQ e o Jest não sai; o repository só usa o helper SQL puro.
+jest.mock("../../../warehouse/fiscal/invoices/invoice", () => ({
+  __esModule: true,
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/custom-filters"),
+}));
 jest.mock("../../../company/unit-business/unit-business.service", () => ({
   __esModule: true,
   default: { findOne: jest.fn() },
