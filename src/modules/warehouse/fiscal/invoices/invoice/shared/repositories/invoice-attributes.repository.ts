@@ -108,11 +108,12 @@ export class InvoiceAttributesRepository extends BaseRepository<Invoice> {
     return rows.map((r) => (r as any).cnpj).filter((cnpj): cnpj is string => !!cnpj);
   }
 
-  // Mapa CNPJ → nome da loja (ex.: "Loja 01 - Assis"), numa query só, pras colunas de loja das listagens de transferência/interna.
-  async findUnitBusinessNamesByCnpj(): Promise<Map<string, string>> {
+  // Mapa CNPJ → nome da loja (ex.: "Loja 01 - Assis"), numa query só, pras colunas de loja das listagens e do detalhe.
+  // cnpjs: só essas lojas (detalhe de uma nota); sem ele, todas (listagens).
+  async findUnitBusinessNamesByCnpj(cnpjs?: string[]): Promise<Map<string, string>> {
     const rows = (await UnitBusiness.findAll({
       attributes: ["cnpj", "name"],
-      where: { cnpj: { [Op.ne]: null } } as WhereOptions,
+      where: { cnpj: cnpjs ? { [Op.in]: cnpjs } : { [Op.ne]: null } } as WhereOptions,
       raw: true,
     })) as unknown as { cnpj: string; name: string }[];
     return new Map(rows.map((r) => [r.cnpj, r.name]));

@@ -124,7 +124,13 @@ jest.mock("../../../../handlers/bling/api/bling_api.service", () => ({
 import { assertAdtBatchTransferReferences } from "../helpers/transfer-reference";
 import auditLogService from "../../../../global/audit-logs/audit-log.service";
 import userService from "../../../../company/users/users/user.service";
-import { invoiceService, transferReferenceService } from "../../../fiscal/invoices/invoice";
+import {
+  invoiceService,
+  transferReferenceService,
+  internalInvoiceScopeService,
+  INTERNAL_BATCH_REFUSED_MESSAGE,
+  INTERNAL_INVOICE_REFUSED_MESSAGE,
+} from "../../../fiscal/invoices/invoice";
 import batchInvoicesService from "../../batch-invoices/batch-invoices.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
@@ -367,6 +373,121 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
       expect(
         unmappedInvoiceProductService.findUnmappedByInvoiceIds,
       ).toHaveBeenCalledWith(["invoice-1"], mockTransaction);
+    });
+
+    // Nota interna e NF-e nunca se misturam: add-invoice atual recusa interna; o do internal/ (flag) só aceita interna.
+    describe("nota interna (options.internal)", () => {
+      const internalInvoice = () => makeInvoice({ id: "invoice-1", invoice_operation_id: "op-internal" });
+
+      beforeEach(() => {
+        jest.spyOn(internalInvoiceScopeService, "getInternalOperationId").mockResolvedValue("op-internal" as any);
+        (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue([]);
+        (pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock).mockResolvedValue(undefined);
+        (assertTransshipment as jest.Mock).mockResolvedValue(false);
+        (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([]);
+        jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-1" } as any);
+      });
+
+      afterEach(() => jest.restoreAllMocks());
+
+      it("busca a nota pelo id (nota interna não tem chave de acesso)", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+        jest.spyOn(service as any, "createBatchStructure").mockRejectedValue(new Error("SENTINEL_CRIOU"));
+
+        await expect(
+          service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", undefined, undefined, undefined, undefined, {
+            internal: true,
+          }),
+        ).rejects.toThrow("SENTINEL_CRIOU");
+
+        expect(invoiceService.findAll).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: ["invoice-1"] } }),
+        );
+      });
+
+      it("lote novo pelo fluxo interno nasce is_internal", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+        const createSpy = jest
+          .spyOn(service as any, "createBatchStructure")
+          .mockRejectedValue(new Error("SENTINEL_CRIOU"));
+
+        await expect(
+          service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", undefined, undefined, undefined, undefined, {
+            internal: true,
+          }),
+        ).rejects.toThrow("SENTINEL_CRIOU");
+
+        expect(createSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ is_internal: true }),
+          expect.any(Array),
+          mockTransaction,
+          expect.any(Set),
+        );
+      });
+
+      it("fluxo interno com NF-e → recusa", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([makeInvoice({ invoice_operation_id: "op-sale" })]);
+
+        await expect(
+          service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", "batch-1", undefined, undefined, undefined, {
+            internal: true,
+          }),
+        ).rejects.toThrow("Só nota interna neste lote");
+      });
+
+      it("rota atual com nota interna → recusa", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+
+        await expect(service.addInvoiceToBatch(["key-1"], "ub-1", "OUTGOING", "batch-1")).rejects.toThrow(
+          INTERNAL_INVOICE_REFUSED_MESSAGE,
+        );
+      });
+
+      it("fluxo interno em lote de NF-e → recusa", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-1", status: "OPEN", is_internal: false } as any);
+
+        await expect(
+          service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", "batch-1", undefined, undefined, undefined, {
+            internal: true,
+          }),
+        ).rejects.toThrow("Lote não é de nota interna");
+      });
+
+      it("rota atual em lote interno → recusa", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([makeInvoice({ invoice_operation_id: "op-sale" })]);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-1", status: "OPEN", is_internal: true } as any);
+
+        await expect(service.addInvoiceToBatch(["key-1"], "ub-1", "OUTGOING", "batch-1")).rejects.toThrow(
+          INTERNAL_BATCH_REFUSED_MESSAGE,
+        );
+      });
+
+      it("fluxo interno em lote interno aberto → adiciona", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-1", type: "OUTGOING", status: "OPEN", mode: "REGULAR", is_internal: true } as any);
+        (batchInvoicesService.createBatchInvoiceWithItems as jest.Mock).mockResolvedValue({ volumesAdded: 3 });
+        jest.spyOn(service, "increment").mockResolvedValue(undefined);
+        (invoiceService as any).updateInvoices = jest.fn().mockResolvedValue(undefined);
+        jest.spyOn((service as any).repository, "getFullBatch").mockResolvedValue({ id: "batch-1" });
+
+        await service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", "batch-1", undefined, undefined, undefined, {
+          internal: true,
+        });
+
+        expect(batchInvoicesService.createBatchInvoiceWithItems).toHaveBeenCalledWith(
+          "batch-1",
+          expect.any(Array),
+          mockTransaction,
+          new Set(),
+        );
+      });
     });
   });
 });

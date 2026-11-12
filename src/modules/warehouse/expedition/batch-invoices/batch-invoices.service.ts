@@ -49,11 +49,11 @@ export class ExpeditionBatchInvoiceService extends BaseService<
     return this.repository.findBatchIdsByInvoiceIds(invoiceIds, unitBusinessId, type);
   }
 
-  // options.allowInternal: só o cancelamento da nota tira nota de lote interno; a rota atual recusa.
+  // options.allowInternal: cancelamento da nota tira de qualquer lote; options.internal: rota do internal/, só lote interno.
   async removeBatchInvoice(
     id: string,
     externalTransaction?: Transaction,
-    options: { allowInternal?: boolean } = {},
+    options: { allowInternal?: boolean; internal?: boolean } = {},
   ): Promise<void> {
     const run = async (t: Transaction) => {
       const batchInvoice = (await this.findById(id, {
@@ -73,8 +73,11 @@ export class ExpeditionBatchInvoiceService extends BaseService<
         throw new Error(`Lote não encontrado!`);
       }
 
-      if (expeditionBatch.is_internal && !options.allowInternal) {
+      if (expeditionBatch.is_internal && !options.allowInternal && !options.internal) {
         throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
+      }
+      if (!expeditionBatch.is_internal && options.internal) {
+        throw new Error("Lote não é de nota interna");
       }
 
       if (CLOSED_EXPEDITION_BATCH_STATUSES.includes(expeditionBatch.status)) {

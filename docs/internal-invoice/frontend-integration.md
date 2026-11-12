@@ -41,12 +41,12 @@ O ideal é o front não oferecer essas ações para nota interna. Como ela não 
 - **`GET /batch`**: por padrão, traz **só lote de NF-e**. Com `filters[is_internal]=true`, traz **só lote interno**. Todo lote agora tem o campo `is_internal` (boolean) na resposta.
 - **`POST /batch/generate-from-invoices`** e **`POST /batch/from-qr-code`** com nota interna: erro `Nota interna: use a tela de nota interna.`.
 - **Rotas atuais que recusam lote interno**, com o erro **`Lote de nota interna: use a tela de nota interna.`**:
-  - `POST /batch/add-invoice` e `POST /batch/add-invoice-to-last-outgoing-batch`;
-  - `PUT /batch/finish/:batchId` (o lote interno é finalizado pela rota própria, §2.5);
+  - `POST /batch/add-invoice` e `POST /batch/add-invoice-to-last-outgoing-batch` (o lote interno recebe nota pela rota própria, §2.3);
+  - `PUT /batch/finish/:batchId` (o lote interno é finalizado pela rota própria, §2.7);
   - romaneio (`/batch/delivery-note/get`);
-  - `DELETE /batch-invoices/remove/:id` (tirar nota do lote);
+  - `DELETE /batch-invoices/remove/:id` (tirar nota do lote; no lote interno, rota própria, §2.4);
   - toda bipagem atual em `/scan-logs/...`: `scan/product`, `scan/product/incoming`, as rotas `.../by-invoice`, `bulk-remove-logs` e `bulk-remove-logs-incoming`.
-- **Excluir lote** (`DELETE /batch/:id` e em massa): aceita lote interno, com a mesma regra do lote de NF-e, que **só exclui lote vazio**. Hoje, na prática, um lote interno ainda não pode ser excluído. Como tirar nota dele não é aceito (item acima), ele nunca fica vazio.
+- **Excluir lote** (`DELETE /batch/:id` e em massa): aceita lote interno, com a mesma regra do lote de NF-e, que **só exclui lote vazio** (tirar as notas antes pela §2.4).
 - Lotes de saída pendentes (busca de lote pendente, CD21, PDV) não trazem lote interno.
 - Detalhe e relatório do lote (`GET /batch/:id`, `/batch/full/get`, `/batch/report/get`, `/batch/is-complete/:batchId`) funcionam igual para lote interno.
 
@@ -62,6 +62,7 @@ São os mesmos parâmetros (`page`, `perPage`, `search`, `filters[...]`, ordena�
 
 - Loja: `filters[unit_business_id]` ou `unitBusinessId` na query. **Sem loja, traz as notas internas de todas as lojas**, igual ao `/transfer/list`.
 - Para status e lote de cada loja, mandar `filters[type]=OUTGOING` (tela de saída) ou `filters[type]=INCOMING` (tela de entrada).
+- `sender_unit_business_name` / `receiver_unit_business_name`: nome da loja emissora e da destinatária (`null` se o CNPJ não for de loja). O detalhe `GET /invoice/full/:id` também devolve esses dois campos, para qualquer nota.
 - Diferenças nos campos: `xml_key` vem sempre `null` e a série é `B`. O `number_system` é o número da nota na Tecinco, o mesmo na saída e na entrada.
 
 ### 2.2 Gerar lote interno
@@ -92,7 +93,46 @@ O resto das regras é o mesmo da geração atual de lote.
   - `Só nota interna neste lote` (veio nota que não é interna);
   - as mesmas validações da geração atual (produto não mapeado etc.).
 
-### 2.3 Bipar produto
+### 2.3 Adicionar nota interna ao lote
+
+`POST /invoice/internal/batch/add-invoice`
+
+Igual ao `POST /batch/add-invoice`, mas a nota vai pelo **id** (a nota interna não tem chave de acesso).
+
+```json
+{
+  "invoiceIds": ["uuid", "uuid"],
+  "type": "OUTGOING",
+  "batchId": "uuid opcional",
+  "unitBusinessId": "uuid opcional"
+}
+```
+
+- `batchId`: lote interno aberto que recebe as notas. Sem ele, cria um lote interno novo.
+- `unitBusinessId`: opcional. Sem ele, vale a loja do usuário logado.
+
+**Resposta `201`:** o lote completo, como no `add-invoice` atual.
+
+**Erros:**
+- `400`: `Informe ao menos uma nota interna`.
+- `500`, com `{ "error": "..." }`:
+  - `Só nota interna neste lote` (veio nota que não é interna);
+  - `Lote não é de nota interna` (`batchId` de lote de NF-e);
+  - as mesmas validações do `add-invoice` atual (lote finalizado, nota em outro lote, transportadoras diferentes, produto não mapeado etc.).
+
+### 2.4 Tirar nota do lote interno
+
+`DELETE /invoice/internal/batch/invoice/:id`
+
+Igual ao `DELETE /batch-invoices/remove/:id`: `:id` é o id da nota no lote (`batchInvoices[].id` do detalhe do lote). As bipagens dessa nota no lote são apagadas e a nota volta a ficar sem lote.
+
+**Resposta `201`:** `{ "message": "Nota removida com sucesso!" }`
+
+**Erros `400`**, com `{ "error": "..." }`:
+- `Lote não é de nota interna` (para lote de NF-e, usar a rota atual);
+- as mesmas validações do remover atual (lote finalizado etc.).
+
+### 2.5 Bipar produto
 
 `POST /invoice/internal/batch/scan/outgoing` (lote de saída)
 `POST /invoice/internal/batch/scan/incoming` (lote de entrada)
@@ -125,7 +165,7 @@ O resto das regras é o mesmo da geração atual de lote.
 
 **Não há remoção de bipagem para lote interno.** As rotas atuais de remover bipagem recusam lote interno.
 
-### 2.4 O que falta bipar de um item
+### 2.6 O que falta bipar de um item
 
 `GET /invoice/internal/batch/pending/:batchItemId`
 
@@ -143,7 +183,7 @@ Substitui o `GET /scan-logs/pending-volumes/:batchItemId`, que mostra volumes do
 
 É uma linha por nota do lote que ainda tem esse produto a ler.
 
-### 2.5 Finalizar lote interno
+### 2.7 Finalizar lote interno
 
 `POST /invoice/internal/batch/:batchId/finish`
 
@@ -159,7 +199,7 @@ As regras são as do finalizar atual (`PUT /batch/finish/:batchId`), inclusive a
 - `Lote não é de nota interna` (para lote de NF-e, usar a rota atual);
 - as mesmas validações do finalizar atual.
 
-### 2.6 Listar lotes internos
+### 2.8 Listar lotes internos
 
 Não tem rota nova: é `GET /batch?filters[is_internal]=true`, com os mesmos parâmetros e a mesma resposta da listagem atual.
 
@@ -172,9 +212,9 @@ Não tem rota nova: é `GET /batch?filters[is_internal]=true`, com os mesmos par
    - na loja emissora (saída), a nota nasce **Aberta**;
    - na loja destinatária (entrada), a nota nasce **Aguardando agendamento** e é agendada pela rota atual, `PUT /invoice/schedule/invoice/:id`;
    - se a nota for cancelada na Tecinco, o sync marca **Cancelada** sozinho e tira a nota do lote, se ela estiver em algum.
-3. **Gerar lote:** selecionar as notas e chamar `POST /invoice/internal/batch/generate`.
+3. **Gerar lote:** selecionar as notas e chamar `POST /invoice/internal/batch/generate`. Para incluir ou tirar nota de um lote aberto: `.../batch/add-invoice` e `.../batch/invoice/:id`.
 4. **Bipar:** abrir o lote (detalhe atual) e bipar por `.../scan/outgoing` ou `.../scan/incoming`. O que falta bipar sai de `.../pending/:batchItemId`.
 5. **Finalizar:** `POST /invoice/internal/batch/:batchId/finish`.
 6. **Lotes internos:** `GET /batch?filters[is_internal]=true`.
 
-**Não existe para nota interna:** cancelar lote, tirar nota do lote, remover bipagem, romaneio, DANFE, etiqueta e carta de correção.
+**Não existe para nota interna:** cancelar lote, remover bipagem, romaneio, DANFE, etiqueta e carta de correção.

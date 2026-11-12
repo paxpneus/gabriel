@@ -83,7 +83,7 @@ export interface InvoiceAttributes {
 
 export interface FullInvoiceAttributes {
   id: string;
-  // Só nas listagens de transferência/interna: nome da loja de cada ponta (null se o CNPJ não for de loja).
+  // Listagens de transferência/interna e detalhe (GET /full/:id): nome da loja de cada ponta (null se o CNPJ não for de loja).
   sender_unit_business_name?: string | null;
   receiver_unit_business_name?: string | null;
   customer_name: string;

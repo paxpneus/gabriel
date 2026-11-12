@@ -74,3 +74,24 @@ describe("InvoiceRepository — listagens sem nota interna", () => {
     expect(findPaginated.mock.calls[0][3]).toEqual({});
   });
 });
+
+// GET /full/:id: cards "Loja Emissora"/"Loja Destinatária" leem os mesmos campos das listagens.
+describe("InvoiceRepository.getFullInvoiceWithBatch — nome da loja de cada ponta", () => {
+  const findNames = jest.requireMock("../../shared").invoiceAttributesRepository.findUnitBusinessNamesByCnpj as jest.Mock;
+
+  beforeEach(() => jest.clearAllMocks());
+  afterEach(() => jest.restoreAllMocks());
+
+  it("busca só as lojas dos 2 CNPJs e devolve null para CNPJ que não é de loja", async () => {
+    findNames.mockResolvedValue(new Map([["12", "Loja 01 - A"]]));
+    jest.spyOn(invoiceRepository, "findById").mockResolvedValue({
+      get: () => ({ id: "inv-1", sender_cnpj: "12", receiver_cnpj: "99", items: [], unitBusinessAttributes: [] }),
+    } as any);
+
+    const result = await invoiceRepository.getFullInvoiceWithBatch("inv-1", "ub-12");
+
+    expect(findNames).toHaveBeenCalledWith(["12", "99"]);
+    expect(result.sender_unit_business_name).toBe("Loja 01 - A");
+    expect(result.receiver_unit_business_name).toBeNull();
+  });
+});

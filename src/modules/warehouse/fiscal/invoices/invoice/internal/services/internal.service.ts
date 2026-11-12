@@ -200,6 +200,23 @@ export class InternalInvoiceService extends BaseService<Invoice, InternalInvoice
     });
   }
 
+  // Adiciona notas internas (por id) a um lote interno aberto, ou cria um novo — add-invoice atual com a flag interna.
+  async addInvoicesToInternalBatch(
+    invoiceIds: string[],
+    unitBusinessId: string,
+    type: string,
+    batchId?: string,
+  ): Promise<ExpeditionBatch> {
+    return expeditionBatchService.addInvoiceToBatch(invoiceIds, unitBusinessId, type, batchId, undefined, undefined, undefined, {
+      internal: true,
+    });
+  }
+
+  // Tira a nota (expedition_batch_invoice id) do lote interno — remover atual com a flag interna.
+  async removeInternalBatchInvoice(batchInvoiceId: string): Promise<void> {
+    return batchInvoicesService.removeBatchInvoice(batchInvoiceId, undefined, { internal: true });
+  }
+
   // Finaliza lote interno pelo finalizar atual (conferência Tecinco pela chave composta da filial).
   async finishInternalBatch(batchId: string, justification: string, user: unknown) {
     return expeditionBatchService.finishBatch(batchId, justification, user, { internal: true });

@@ -806,6 +806,7 @@ export class ExpeditionBatchService extends BaseService<
     return this.generateBatchFromInvoices(batchInvoiceIds, unitBusinessId, type, mode, blingCheckJobId);
   }
 
+// options.internal: só o domínio internal/ passa — chavesAcesso viram ids de nota interna (sem chave) e o lote é interno.
 async addInvoiceToBatch(
   chavesAcesso: string[],
   unitBusinessId: string,
@@ -814,8 +815,10 @@ async addInvoiceToBatch(
   transferInvoiceReference?: string,
   externalTransaction?: Transaction,
   blingCheckJobId?: string,
+  options: { internal?: boolean } = {},
 ): Promise<ExpeditionBatch> {
   let resultBatchId: string;
+  const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
 
   const run = async (t: Transaction) => {
     if (!Array.isArray(chavesAcesso) || !chavesAcesso.length) {
@@ -834,22 +837,37 @@ async addInvoiceToBatch(
     throw new Error("Nenhuma chave de acesso válida informada");
   }
 
+    // Nota interna não tem chave de acesso: no fluxo interno a busca é pelo id da nota.
+    const lookupField = options.internal ? "id" : "xml_key";
     const invoices = await invoiceService.findAll({
-      where: { xml_key: cleanedChaves },
+      where: { [lookupField]: cleanedChaves },
       include: [{ model: InvoiceItems, as: "items", required: false }],
       transaction: t,
     });
 
     if (!invoices.length) {
       throw new Error(
-        "Nenhuma nota encontrada para as chaves de acesso informadas",
+        options.internal
+          ? "Nenhuma nota interna encontrada"
+          : "Nenhuma nota encontrada para as chaves de acesso informadas",
       );
     }
 
     if (invoices.length !== cleanedChaves.length) {
-      const foundKeys = invoices.map((i: any) => i.xml_key);
+      const foundKeys = invoices.map((i: any) => i[lookupField]);
       const missing = cleanedChaves.filter((c) => !foundKeys.includes(c));
       throw new Error(`Nota(s) não encontrada(s): ${missing.join(", ")}`);
+    }
+
+    // Nota interna só em lote interno e lote interno só com nota interna (mesma regra do generateBatchFromInvoices).
+    const internalCount = invoices.filter(
+      (invoice) => !!internalOperationId && invoice.invoice_operation_id === internalOperationId,
+    ).length;
+    if (options.internal && internalCount !== invoices.length) {
+      throw new Error("Só nota interna neste lote");
+    }
+    if (!options.internal && internalCount > 0) {
+      throw new Error(INTERNAL_INVOICE_REFUSED_MESSAGE);
     }
 
 
@@ -976,7 +994,8 @@ async addInvoiceToBatch(
       if (!found) throw new Error("Lote não encontrado");
       if (found.status === "FINISHED") throw new Error("Lote já finalizado");
       // Lote interno só recebe nota pelo internal/ (e NF-e nunca entra nele).
-      if (found.is_internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
+      if (found.is_internal && !options.internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
+      if (!found.is_internal && options.internal) throw new Error("Lote não é de nota interna");
 
       // Nota só entra em lote do mesmo tipo; exceção: transbordo (entrada e saída da mesma loja).
       const wrongType = plainInvoices.find(
@@ -1054,6 +1073,7 @@ async addInvoiceToBatch(
         integrations_id: firstInvoice.integrations_id,
         type,
         transporters_id: firstInvoice.transporter_id || null,
+        is_internal: !!options.internal,
       };
 
       const { batch } = await this.createBatchStructure(

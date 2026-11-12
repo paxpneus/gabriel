@@ -520,8 +520,15 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       ]) ?? [],
     );
 
+    // Cards "Loja Emissora"/"Loja Destinatária": mesmo nome das listagens (null se o CNPJ não é de loja).
+    const unitBusinessNames = await invoiceAttributesRepository.findUnitBusinessNamesByCnpj(
+      [plain.sender_cnpj, plain.receiver_cnpj].filter(Boolean),
+    );
+
     return {
       ...plain,
+      sender_unit_business_name: unitBusinessNames.get(plain.sender_cnpj) ?? null,
+      receiver_unit_business_name: unitBusinessNames.get(plain.receiver_cnpj) ?? null,
       unitBusinessAttributes: plain.unitBusinessAttributes?.[0] ?? null,
       items: plain.items?.map((item: any) => ({
         ...item,

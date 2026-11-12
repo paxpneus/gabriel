@@ -15,6 +15,8 @@ class InternalController extends RouterController {
 
     this.router.get("/internal/list", ...this.mw("listInternalInvoices"), this.listInternalInvoices);
     this.router.post("/internal/batch/generate", ...this.mw("generateInternalBatch"), this.generateInternalBatch);
+    this.router.post("/internal/batch/add-invoice", ...this.mw("addInvoicesToInternalBatch"), this.addInvoicesToInternalBatch);
+    this.router.delete("/internal/batch/invoice/:id", ...this.mw("removeInternalBatchInvoice"), this.removeInternalBatchInvoice);
     this.router.post("/internal/batch/scan/outgoing", ...this.mw("scanInternalBatch"), this.scanInternalBatch("OUTGOING"));
     this.router.post("/internal/batch/scan/incoming", ...this.mw("scanInternalBatch"), this.scanInternalBatch("INCOMING"));
     this.router.post("/internal/batch/adjust/:direction", ...this.mw("adjustInternalBatch"), this.adjustInternalBatch);
@@ -26,6 +28,8 @@ class InternalController extends RouterController {
     return {
       listInternalInvoices: [authenticate, userPermissions],
       generateInternalBatch: [authenticate, userPermissions],
+      addInvoicesToInternalBatch: [authenticate, userPermissions],
+      removeInternalBatchInvoice: [authenticate, userPermissions],
       scanInternalBatch: [authenticate, userPermissions],
       adjustInternalBatch: [authenticate, userPermissions],
       findInternalBatchPending: [authenticate, userPermissions],
@@ -46,6 +50,32 @@ class InternalController extends RouterController {
       return res.status(201).json(batch);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
+    }
+  };
+
+  // Body { invoiceIds, type, batchId?, unitBusinessId? }: igual ao POST /batch/add-invoice, mas por id da nota interna.
+  addInvoicesToInternalBatch = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { invoiceIds, type, batchId } = req.body;
+      if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+        return res.status(400).json({ error: "Informe ao menos uma nota interna" });
+      }
+      const context = await getUserContext(req);
+      const unitBusinessId = req.body.unitBusinessId ?? resolveUnitBusinessId(req, context.unitBusinessId);
+      const batch = await internalInvoiceService.addInvoicesToInternalBatch(invoiceIds, unitBusinessId, type, batchId);
+      return res.status(201).json(batch);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  // :id = id da nota no lote (batchInvoices[].id), igual ao DELETE /batch-invoices/remove/:id.
+  removeInternalBatchInvoice = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      await internalInvoiceService.removeInternalBatchInvoice(req.params.id as string);
+      return res.status(201).json({ message: "Nota removida com sucesso!" });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
     }
   };
 
