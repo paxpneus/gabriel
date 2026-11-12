@@ -956,6 +956,16 @@ async addInvoiceToBatch(
       if (!found) throw new Error("Lote não encontrado");
       if (found.status === "FINISHED") throw new Error("Lote já finalizado");
 
+      // Nota só entra em lote do mesmo tipo; exceção: transbordo (entrada e saída da mesma loja).
+      const wrongType = plainInvoices.find(
+        (i) => found.type !== type && !transshipmentInvoiceIds.has(i.id),
+      );
+      if (wrongType) {
+        throw new Error(
+          `Nota ${wrongType.number_system} é de ${type === "INCOMING" ? "entrada" : "saída"} e não pode entrar em lote de ${found.type === "INCOMING" ? "entrada" : "expedição"}`,
+        );
+      }
+
       if (found.mode === "REGULAR" && found.transporters_id) {
         const conflicting = plainInvoices.find(
           (i) =>
@@ -1701,7 +1711,8 @@ async addInvoiceToLastOutgoingBatch(
           },
         ],
       },
-      { status: { [Op.in]: ["OPEN", "PENDING"] } },
+      // Só lotes de saída: lote de entrada aberto não pode aparecer como destino de nota de saída.
+      { type: "OUTGOING", status: { [Op.in]: ["OPEN", "PENDING"] } },
     );
   }
 

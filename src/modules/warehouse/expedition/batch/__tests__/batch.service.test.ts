@@ -211,7 +211,7 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
         jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-1" } as any);
         jest
           .spyOn(service, "findByIdFullBatch")
-          .mockResolvedValue({ id: "batch-1", status: "OPEN", mode: "REGULAR", transporters_id: null } as any);
+          .mockResolvedValue({ id: "batch-1", type: "OUTGOING", status: "OPEN", mode: "REGULAR", transporters_id: null } as any);
         (batchInvoicesService.createBatchInvoiceWithItems as jest.Mock).mockResolvedValue({ volumesAdded: 2 });
         jest.spyOn(service, "increment").mockResolvedValue(undefined);
         (invoiceService as any).updateInvoices = jest.fn().mockRejectedValue(new Error("já vinculada"));
@@ -227,6 +227,20 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
           undefined,
           mockTransaction,
         );
+      });
+
+      it("nota de saída não entra em lote de entrada (não transbordo)", async () => {
+        jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-in" } as any);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-in", type: "INCOMING", status: "OPEN", mode: "REGULAR", transporters_id: null } as any);
+        (batchInvoicesService.createBatchInvoiceWithItems as jest.Mock).mockResolvedValue({ volumesAdded: 2 });
+
+        await expect(
+          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-in"),
+        ).rejects.toThrow("não pode entrar em lote de entrada");
+
+        expect(batchInvoicesService.createBatchInvoiceWithItems).not.toHaveBeenCalled();
       });
 
       it("lote novo (texto ignorado ao criar) → não grava nem valida a referência", async () => {
@@ -256,7 +270,7 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
         jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-1" } as any);
         jest
           .spyOn(service, "findByIdFullBatch")
-          .mockResolvedValue({ id: "batch-1", status: "OPEN", mode: "REGULAR", transporters_id: null } as any);
+          .mockResolvedValue({ id: "batch-1", type: "OUTGOING", status: "OPEN", mode: "REGULAR", transporters_id: null } as any);
         (batchInvoicesService.createBatchInvoiceWithItems as jest.Mock).mockResolvedValue({ volumesAdded: 2 });
         jest.spyOn(service, "increment").mockResolvedValue(undefined);
         (invoiceService as any).updateInvoices = jest.fn().mockResolvedValue(undefined);
