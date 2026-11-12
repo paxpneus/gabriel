@@ -82,8 +82,12 @@ export type TCarNotaFiscalXmlParams =
   | TCarNotaFiscalXmlByChaveNfe
   | TCarNotaFiscalXmlByChaveComposta;
 
+// Série da nota interna na Tecinco (modelo_documento 1, sem chave_nfe nem XML; transferência entre lojas).
+export const TECINCO_INTERNAL_INVOICE_SERIES = "B";
+
 export interface TCarNotaFiscalListParams {
   nota?: number | string;
+  serie?: string;
   entrada_saida?: "E" | "S";
   situacao?: "A" | "N" | "C";
   modelo_documento?: number;

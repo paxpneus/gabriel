@@ -1,0 +1,248 @@
+// Todas as dependências do service mockadas por factory: nenhuma cadeia real (Redis/BullMQ) é carregada.
+jest.mock("../../shared", () => ({
+  __esModule: true,
+  invoiceCreationService: {
+    createWithRelations: jest.fn(),
+    ensureUnitBusinessAttributes: jest.fn(),
+    addMissingInvoiceItems: jest.fn(),
+  },
+  invoiceAttributesRepository: { updateWithAttributesForAllUnits: jest.fn() },
+}));
+
+jest.mock("../repositories/internal.repository", () => ({
+  __esModule: true,
+  default: {
+    findIdByIdSystem: jest.fn(),
+    findExistingInternalNumbers: jest.fn(),
+    findInternalNumbersNotCancelledInUnitBusinesses: jest.fn(),
+  },
+}));
+
+jest.mock("../../../invoice-operation/invoice-operation.repository", () => ({
+  __esModule: true,
+  default: { findIdByCode: jest.fn() },
+}));
+
+jest.mock("../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service", () => ({
+  __esModule: true,
+  default: { findAll: jest.fn(), update: jest.fn(), bulkDelete: jest.fn(), bulkCreate: jest.fn() },
+}));
+
+jest.mock("../../../../../../sales/stores/stores.service", () => ({
+  __esModule: true,
+  default: { findOne: jest.fn() },
+}));
+
+jest.mock("../../../../../transporter/transporter.service", () => ({
+  __esModule: true,
+  default: { resolveTransporter: jest.fn() },
+}));
+
+import { invoiceAttributesRepository, invoiceCreationService } from "../../shared";
+import internalInvoiceRepository from "../repositories/internal.repository";
+import invoiceOperationRepository from "../../../invoice-operation/invoice-operation.repository";
+import unmappedInvoiceProductService from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import storeService from "../../../../../../sales/stores/stores.service";
+import transporterService from "../../../../../transporter/transporter.service";
+import { INVOICE_OPERATION_CODES } from "../../../invoice-operation/invoice-operation.types";
+import internalInvoiceService, { UpsertInternalInvoiceParams } from "../services/internal.service";
+
+const creation = invoiceCreationService as jest.Mocked<typeof invoiceCreationService>;
+const attributes = invoiceAttributesRepository as jest.Mocked<typeof invoiceAttributesRepository>;
+const repository = internalInvoiceRepository as jest.Mocked<typeof internalInvoiceRepository>;
+const operations = invoiceOperationRepository as jest.Mocked<typeof invoiceOperationRepository>;
+const unmapped = unmappedInvoiceProductService as jest.Mocked<typeof unmappedInvoiceProductService>;
+
+const STORE_12 = { cnpj: "02316749001220", name: "PAX LOJA 12" };
+const STORE_24 = { cnpj: "02316749002463", name: "PAX LOJA 24" };
+
+// Nota 882 de 12 → 24 como a Tecinco devolve no detalhe da chave composta (só os campos usados).
+function buildParams(overrides: Partial<UpsertInternalInvoiceParams> = {}): UpsertInternalInvoiceParams {
+  return {
+    detail: {
+      chave: { nota: 882, serie: "B", seq_cancelamento: "0" },
+      cabecalho: { emissao: "2026-10-31", situacao: "A", entrada_saida: "S" },
+      totais: { valor_nota: 1554.08, valor_produtos: 1554.08, valor_frete: 0, valor_desconto: 0, valor_ipi: 0 },
+      itens: [
+        {
+          epeit_seq: 1,
+          epctb_codigo: "20302",
+          produto_nome: "PNEU 185/60R15",
+          produto_unidade: "PC",
+          epeit_qtdade: 4,
+          epeit_vlrunit: 388.52,
+          epeit_vlrliquido: 1554.08,
+          epeit_percicm: 12,
+          epeit_vlricm: 186.49,
+        },
+      ],
+    },
+    numero: "882",
+    invoiceType: "OUTGOING",
+    sender: STORE_12,
+    receiver: STORE_24,
+    integrationsId: "tecinco-id",
+    operationalItems: [
+      { product_id: "product-1", quantity_expected: 4, item_number: 1, sku: "20302", gtin: "789", description: "PNEU 185/60R15" },
+    ],
+    unmappedItems: [],
+    cancelled: false,
+    ...overrides,
+  };
+}
+
+describe("InternalInvoiceService.upsertInternalInvoice", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    operations.findIdByCode.mockResolvedValue("op-internal");
+    (transporterService.resolveTransporter as jest.Mock).mockResolvedValue({ id: "tr-1", cnpj: "0000000", name: "Sem transporte" });
+    (storeService.findOne as jest.Mock).mockResolvedValue({ id: "store-outros" });
+    creation.createWithRelations.mockResolvedValue({ id: "invoice-1" } as any);
+    unmapped.findAll.mockResolvedValue([]);
+  });
+
+  it("cria sem XML, com série B, operação interna e itens fiscais do detalhe", async () => {
+    repository.findIdByIdSystem.mockResolvedValue(null);
+
+    const id = await internalInvoiceService.upsertInternalInvoice(buildParams());
+
+    expect(id).toBe("invoice-1");
+    expect(operations.findIdByCode).toHaveBeenCalledWith(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
+    expect(transporterService.resolveTransporter).toHaveBeenCalledWith({ document: null, integrationsId: "tecinco-id" });
+    const [data, items, options] = creation.createWithRelations.mock.calls[0];
+    expect(data).toMatchObject({
+      id_system: `TCAR-INTERNAL-${STORE_12.cnpj}-882`,
+      xml_key: null,
+      xml_path: null,
+      danfe_path: null,
+      invoice_series: "B",
+      invoice_operation_id: "op-internal",
+      store_id: "store-outros",
+      sender_cnpj: STORE_12.cnpj,
+      receiver_cnpj: STORE_24.cnpj,
+      customer_document: STORE_24.cnpj,
+      transporter_id: "tr-1",
+      invoice_value: 1554.08,
+      number_system: "882",
+    });
+    // Data sem hora = meia-noite de Brasília.
+    expect((data.emitted_at as Date).toISOString()).toBe("2026-10-31T03:00:00.000Z");
+    expect(items).toEqual([
+      expect.objectContaining({
+        product_id: "product-1",
+        quantity_expected: 4,
+        fiscal: expect.objectContaining({ quantity: 4, unit_price: 388.52, total_value: 1554.08, icms_rate: 12, icms_value: 186.49 }),
+      }),
+    ]);
+    expect(options).toEqual({ initialStatus: "OPEN", invoiceType: "OUTGOING" });
+    expect(attributes.updateWithAttributesForAllUnits).not.toHaveBeenCalled();
+  });
+
+  it("E (destino) e S (origem) da mesma transferência procuram o mesmo id_system", async () => {
+    repository.findIdByIdSystem.mockResolvedValue(null);
+
+    await internalInvoiceService.upsertInternalInvoice(buildParams());
+    await internalInvoiceService.upsertInternalInvoice(buildParams({ invoiceType: "INCOMING" }));
+
+    const idSystems = repository.findIdByIdSystem.mock.calls.map(([idSystem]) => idSystem);
+    expect(idSystems).toEqual([`TCAR-INTERNAL-${STORE_12.cnpj}-882`, `TCAR-INTERNAL-${STORE_12.cnpj}-882`]);
+    // Entrada nasce aguardando agendamento (mesma regra do XML).
+    expect(creation.createWithRelations.mock.calls[1][2]).toEqual({
+      initialStatus: "WAITING_SCHEDULE_SALES",
+      invoiceType: "INCOMING",
+    });
+  });
+
+  it("existente: atualiza dados, garante attributes e itens faltantes, sem recriar nem trocar a loja", async () => {
+    repository.findIdByIdSystem.mockResolvedValue({ id: "invoice-1" });
+
+    const id = await internalInvoiceService.upsertInternalInvoice(buildParams({ invoiceType: "INCOMING" }));
+
+    expect(id).toBe("invoice-1");
+    expect(creation.createWithRelations).not.toHaveBeenCalled();
+    expect(storeService.findOne).not.toHaveBeenCalled();
+    const [ids, data] = attributes.updateWithAttributesForAllUnits.mock.calls[0];
+    expect(ids).toEqual(["invoice-1"]);
+    expect(data).toMatchObject({ invoice_operation_id: "op-internal", invoice_series: "B" });
+    expect(data).not.toHaveProperty("store_id");
+    expect(data).not.toHaveProperty("id_system");
+    expect(creation.ensureUnitBusinessAttributes).toHaveBeenCalledWith("invoice-1", {
+      senderCnpj: STORE_12.cnpj,
+      receiverCnpj: STORE_24.cnpj,
+      initialStatus: "WAITING_SCHEDULE_SALES",
+      invoiceType: "INCOMING",
+    });
+    expect(creation.addMissingInvoiceItems).toHaveBeenCalledWith("invoice-1", expect.any(Array));
+  });
+
+  it("cancelada nasce CANCELLED", async () => {
+    repository.findIdByIdSystem.mockResolvedValue(null);
+
+    await internalInvoiceService.upsertInternalInvoice(buildParams({ cancelled: true }));
+
+    expect(creation.createWithRelations.mock.calls[0][2]).toEqual({ initialStatus: "CANCELLED", invoiceType: "OUTGOING" });
+  });
+
+  it("sem a operação interna no banco não grava a nota", async () => {
+    operations.findIdByCode.mockResolvedValue(null);
+
+    await expect(internalInvoiceService.upsertInternalInvoice(buildParams())).rejects.toThrow("seed da m351");
+    expect(creation.createWithRelations).not.toHaveBeenCalled();
+  });
+
+  it("não mapeados: cria o novo, atualiza o existente e apaga o UNMAPPED que sumiu, sem query por item", async () => {
+    repository.findIdByIdSystem.mockResolvedValue({ id: "invoice-1" });
+    unmapped.findAll.mockResolvedValue([
+      { id: "u-keep", ean: "111", sku: null, status: "UNMAPPED" },
+      { id: "u-gone", ean: null, sku: "OLD", status: "UNMAPPED" },
+      { id: "u-mapped", ean: null, sku: "DONE", status: "MAPPED" },
+    ] as any);
+
+    await internalInvoiceService.upsertInternalInvoice(
+      buildParams({
+        unmappedItems: [
+          { sku: "A", gtin: "111", qty: 2, xProd: "Pneu A", reason: "r", type: "ERROR_CATALOG", external_id: "10" },
+          { sku: "NEW", gtin: null, qty: 3.7, xProd: "Pneu novo", reason: "r2" },
+        ],
+      }),
+    );
+
+    expect(unmapped.findAll).toHaveBeenCalledTimes(1);
+    expect(unmapped.update).toHaveBeenCalledWith("u-keep", {
+      quantity: 2,
+      integrations_id: "tecinco-id",
+      external_id: "10",
+      type: "ERROR_CATALOG",
+    });
+    expect(unmapped.bulkCreate).toHaveBeenCalledWith([
+      expect.objectContaining({ invoice_id: "invoice-1", sku: "NEW", ean: null, quantity: 3, type: "ERROR_INVOICE", status: "UNMAPPED" }),
+    ]);
+    // Só o UNMAPPED obsoleto sai; o já resolvido manualmente fica.
+    expect(unmapped.bulkDelete).toHaveBeenCalledWith({ where: { id: expect.anything() } });
+    const deleteWhere = (unmapped.bulkDelete.mock.calls[0][0] as any).where.id;
+    expect(Object.getOwnPropertySymbols(deleteWhere).map((symbol) => deleteWhere[symbol])).toEqual([["u-gone"]]);
+  });
+});
+
+describe("InternalInvoiceService — dedup do sync", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("passa a operação interna e o lado da filial pro repository", async () => {
+    operations.findIdByCode.mockResolvedValue("op-internal");
+    repository.findExistingInternalNumbers.mockResolvedValue(["882"]);
+
+    await expect(internalInvoiceService.findExistingInternalNumbers("E", STORE_24.cnpj, ["882", "883"])).resolves.toEqual(["882"]);
+    expect(repository.findExistingInternalNumbers).toHaveBeenCalledWith("op-internal", "E", STORE_24.cnpj, ["882", "883"]);
+  });
+
+  it("sem a operação no banco não deduplica (nem consulta)", async () => {
+    operations.findIdByCode.mockResolvedValue(null);
+
+    await expect(internalInvoiceService.findExistingInternalNumbers("S", STORE_12.cnpj, ["882"])).resolves.toEqual([]);
+    await expect(
+      internalInvoiceService.findInternalNumbersNotCancelledInUnitBusinesses("S", STORE_12.cnpj, ["882"], ["12"]),
+    ).resolves.toEqual([]);
+    expect(repository.findExistingInternalNumbers).not.toHaveBeenCalled();
+    expect(repository.findInternalNumbersNotCancelledInUnitBusinesses).not.toHaveBeenCalled();
+  });
+});

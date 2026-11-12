@@ -5,7 +5,9 @@ export type TCarResource =
   | 'invoice_xml'
   | 'customer'
   | 'invoice_transfer'
-  | 'invoice_by_key';
+  | 'invoice_by_key'
+  // Nota interna (série B, sem chave_nfe nem XML): payload = TCarInvoiceXmlPayload (chave composta).
+  | 'invoice_internal';
 
 export type TCarAction = 'created' | 'updated' | 'deleted' | 'sync';
 
@@ -225,5 +227,24 @@ export interface TCarNotaFiscalItem {
   epeit_vlrunit: number;
   epeit_vlrdesc?: number;
   epeit_vlrliquido?: number;
+  epeit_percicm?: number;
+  epeit_vlricm?: number;
   ntz_codigoproduto?: number;
+}
+
+// Detalhe de GET /notas-fiscais/:nota pela chave composta — só os campos que a nota interna (série B) usa.
+export interface TCarNotaFiscalDetail {
+  chave?: { nota?: number | string; serie?: string; seq_cancelamento?: string };
+  filial?: { codigo?: number; nome?: string };
+  fiscal?: { chave_nfe?: string; situacao_nfe?: string };
+  totais?: {
+    valor_nota?: number;
+    valor_produtos?: number;
+    valor_frete?: number;
+    valor_desconto?: number;
+    valor_ipi?: number;
+  };
+  cliente?: { codigo?: number | string; nome?: string; cnpj_cpf?: string };
+  cabecalho?: { emissao?: string; situacao?: string; entrada_saida?: string };
+  itens?: TCarNotaFiscalItem[];
 }
