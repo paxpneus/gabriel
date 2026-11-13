@@ -691,7 +691,7 @@ export class PdvSalesRequestController extends BaseController<
       const { decision } = req.body;
       const updated = await this.service.resolveCorrection(
         req.params.id as string,
-        { userId: this.actorUserId(req), decision },
+        { userId: this.actorUserId(req), roleId: this.access(req).roleId, decision },
       );
       return res.json(updated);
     } catch (error: any) {
@@ -707,7 +707,7 @@ export class PdvSalesRequestController extends BaseController<
       const { decision, note } = req.body;
       const updated = await this.service.cd21ResolveInvoiceCancelled(
         req.params.id as string,
-        { decision, userId: this.actorUserId(req), note },
+        { decision, userId: this.actorUserId(req), roleId: this.access(req).roleId, note },
       );
       return res.json(updated);
     } catch (error: any) {

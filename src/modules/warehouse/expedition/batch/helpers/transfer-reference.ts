@@ -6,7 +6,7 @@ import {
 import { ExpeditionBatchFull } from "../batch.types";
 
 // Lote da logística própria (CD 12/17 pelo nome, como no PDV; do lote ou de qualquer nota, como findPendingOutgoingByTransporter):
-// toda nota precisa ter transferência existente. "Já vinculada a outra" não é checado aqui: as escritas da referência já barram.
+// toda nota precisa ter transferência existente (pelo vínculo; nota antiga sem vínculo, pelo número). "Já vinculada a outra" não é checado aqui: as escritas da referência já barram.
 // Nota com carta de correção fica fora: era pra ir por transportadora, então não tem transferência (attachCorrectionLetter).
 // `action` fecha a mensagem ("gerar o romaneio" / "finalizar o lote").
 export async function assertAdtBatchTransferReferences(batch: ExpeditionBatchFull, action: string): Promise<void> {
@@ -24,6 +24,7 @@ export async function assertAdtBatchTransferReferences(batch: ExpeditionBatchFul
       invoiceId: bi.invoice_id,
       invoiceNumber: bi.invoice.number_system,
       reference: bi.invoice.transfer_invoice_reference,
+      transferInvoiceId: bi.invoice.transfer_invoice_id,
     })),
     `Vincule a nota de transferência (ou anexe a carta de correção da nota, se ela devia ter ido por transportadora) antes de ${action}.`,
     { checkAlreadyUsed: false },

@@ -10,6 +10,7 @@ import {
   extractUnitBusinessIdFromRequest,
   internalInvoiceScopeService,
   resolveUnitBusinessId,
+  transferLinkActorFromRequest,
 } from "../../shared";
 
 // CRUD, detalhe completo, listagens e histórico de auditoria da nota fiscal.
@@ -147,8 +148,21 @@ export class InvoiceController extends BaseController<
         [req.params.id as string],
         unitBusinessId,
         req.body,
+        undefined,
+        undefined,
+        transferLinkActorFromRequest(req),
       );
       return res.json({ success: true });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // PUT /bulk: mesmo do BaseController, repassando quem alterou (auditoria/admin do vínculo de transferência).
+  bulkUpdate = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const records = await this.service.bulkUpdate(req.body, { where: { id: req.body.ids } }, transferLinkActorFromRequest(req));
+      return res.status(201).json(records);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
@@ -168,6 +182,7 @@ export class InvoiceController extends BaseController<
         id as string,
         unitBusinessId,
         type === "INCOMING" || type === "OUTGOING" ? type : undefined,
+        transferLinkActorFromRequest(req).roleId,
       );
       return res.json({ data });
     } catch (err: any) {

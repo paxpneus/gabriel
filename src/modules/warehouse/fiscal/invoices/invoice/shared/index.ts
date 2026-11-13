@@ -13,6 +13,7 @@ export * from "./helpers/reference-description";
 export * from "./helpers/transfer-reference";
 export * from "./helpers/bling-entrance-url";
 export { default as transferReferenceService, TransferReferenceService } from "./services/transfer-reference.service";
+export type { TransferLinkActor } from "./services/transfer-reference.service";
 export { default as invoiceCreationService, InvoiceCreationService } from "./services/invoice-creation.service";
 export { default as internalInvoiceScopeService, InternalInvoiceScopeService } from "./services/internal-invoice-scope.service";
 export { default as invoiceAttributesRepository, InvoiceAttributesRepository } from "./repositories/invoice-attributes.repository";

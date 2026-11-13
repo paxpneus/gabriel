@@ -45,6 +45,7 @@ class Invoice
   public total_read!: number;
   public total_expected!: number;
   public transfer_invoice_reference?: string | null;
+  public transfer_invoice_id?: string | null;
   public return_invoice_reference?: string | null;
   public observation?: string | null;
   public invoice_series?: string | null;
@@ -100,6 +101,15 @@ Invoice.init(
       type: DataTypes.STRING(255),
       allowNull: true,
     },
+    // Nota de transferência vinculada (só nota de venda); transfer_invoice_reference fica só pra exibição.
+    transfer_invoice_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "invoices",
+        key: "id",
+      },
+    },
     return_invoice_reference: {
       type: DataTypes.STRING(255),
       allowNull: true,
@@ -132,7 +142,6 @@ Invoice.init(
     store_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      unique: true,
       references: {
         model: "stores",
         key: "id",

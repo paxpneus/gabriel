@@ -42,6 +42,7 @@ export const SUMMARY_INVOICE_ATTRIBUTES = [
   "sender_name",
   "receiver_name",
   "transfer_invoice_reference",
+  "transfer_invoice_id",
   "return_invoice_reference",
   "transporter_name",
   "printed_label",

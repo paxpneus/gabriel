@@ -8,7 +8,7 @@ export enum AuditEntity {
   INVOICE = "INVOICE",
 }
 
-// Quem gerou o log: usuário logado, sistema (sync/fila) ou link do PDV (sem login, ainda sem fluxo auditado).
+// Quem gerou o log: usuário logado, sistema (sync/fila) ou link do PDV (sem login — vínculo da nota de transferência).
 export enum AuditOrigin {
   USER = "USER",
   SYSTEM = "SYSTEM",

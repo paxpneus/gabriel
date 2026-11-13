@@ -795,3 +795,24 @@ anexar o PDF em `POST /api/invoice/:id/correction-letter` (multipart `file`). Co
 tiver nota com carta e ainda não tiver justificativa → senão `400 Nota(s) com carta de correção: 022307. Informe a justificativa da carta de correção para gerar o romaneio.`
 Justificativas prontas em `GET /api/batch/correction-letter/justifications`: o front troca `{notas}` pelos números das notas e manda o texto nesse mesmo campo.
 Finalizar lote passou a ter as mesmas travas do romaneio. Contrato completo: `docs/expedition/correction-letter.md`.
+
+## Mudou: vínculo da nota de transferência por id
+
+Rotas de lote (`POST /api/batch/add-invoice` e `add-invoice-to-last-outgoing-batch`) recebem `transfer_invoice_id` (id da nota de
+transferência escolhida no select) no lugar de `transfer_invoice_reference`. `PUT /api/invoice/:id` e `PUT /api/invoice/bulk` também:
+mandar só o texto `transfer_invoice_reference` → `400 Selecione a nota de transferência na lista (ou envie o XML/DANFE da nota).`;
+`transfer_invoice_id: null` (ou referência vazia) limpa o vínculo. O backend grava `transfer_invoice_reference = "REF: <n>"` sozinho, só pra exibição.
+Select das transferências: `GET /api/invoice/transfer/list?search=<número>` (cada item traz `id`, `number_system`,
+`sender_unit_business_name`, `receiver_unit_business_name`). Nota agora traz `transfer_invoice_id` (listagens e detalhe). A validação "já vinculada a outra nota de venda" passou a ser pelo id:
+transferências com o mesmo número saindo de lojas diferentes não se confundem mais.
+
+## Novo: transferência vinculada no detalhe da nota + regras de edição
+
+`GET /api/invoice/full/:id` traz `transferInvoice` (`{ id, number_system, sender_unit_business_name, receiver_unit_business_name, emitted_at }`,
+`null` sem vínculo — inclusive nota antiga só com o texto `REF:`), `can_edit_transfer_invoice` (boolean) e `transfer_invoice_edit_blocked_reason`
+(texto pra exibir quando `false`). Vincular/trocar/remover pela tela da nota (`PUT /api/invoice/:id`, `bulk`, lote):
+- nota de venda finalizada na loja emitente → só admin;
+- nota com solicitação no PDV: só se a solicitação estiver em aguardando NF de transferência, erro crítico, pendente expedição ou finalizada (ADT);
+  senão `400 ...resolva pelo PDV`. A solicitação acompanha: remover em pendente expedição/erro crítico volta pra aguardando NF de transferência;
+  finalizada continua finalizada (só admin).
+Toda alteração da transferência fica no histórico da nota de venda (`GET /api/invoice/:id/audit-logs`); pelo link do PDV aparece `origin: "PDV"` sem usuário.

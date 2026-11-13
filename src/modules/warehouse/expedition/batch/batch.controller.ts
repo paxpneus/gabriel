@@ -9,6 +9,7 @@ import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { getRequestUserId, getUserContext } from "../../../../shared/query/get-logged-user";
 import { CORRECTION_LETTER_JUSTIFICATIONS, PdvBatchActionParams } from "./batch.types";
 import { assertUuid } from "../../../../shared/utils/validators/uuid";
+import { transferLinkActorFromRequest } from "../../fiscal/invoices/invoice";
 import {
   authenticateOrPdvLink,
   pdvAccess,
@@ -322,7 +323,7 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoiceKey, unitBusinessId, type, batchId, transfer_invoice_reference, blingCheckJobId } = req.body;
+      const { invoiceKey, unitBusinessId, type, batchId, transfer_invoice_id, blingCheckJobId } = req.body;
 
       const chaves: string[] = Array.isArray(invoiceKey)
       ? invoiceKey
@@ -338,9 +339,10 @@ export class ExpeditionBatchController extends BaseController<
         unitBusinessResolved,
         type,
         batchId,
-        transfer_invoice_reference,
+        transfer_invoice_id,
         undefined,
         blingCheckJobId,
+        { transferLinkActor: transferLinkActorFromRequest(req) },
       );
       return res.status(201).json(batches);
     } catch (error: any) {
@@ -353,7 +355,7 @@ export class ExpeditionBatchController extends BaseController<
   res: Response,
 ): Promise<Response> => {
   try {
-    const { type, transfer_invoice_reference } = req.body;
+    const { type, transfer_invoice_id } = req.body;
     const { invoiceKey } = req.body;
 
     const chaves: string[] = Array.isArray(invoiceKey)
@@ -379,7 +381,8 @@ export class ExpeditionBatchController extends BaseController<
       chaves,
       unitBusinessId,
       type,
-      transfer_invoice_reference,
+      transfer_invoice_id,
+      transferLinkActorFromRequest(req),
     );
 
     return res.json(batch);

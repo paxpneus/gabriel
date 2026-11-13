@@ -24,8 +24,14 @@ import {
   invoiceQueryConfig,
   invoiceXmlRepository,
   readNfeIde,
+  splitTransferLinkWrite,
+  TransferLinkActor,
   transferReferenceService,
 } from "../../shared";
+import pdvSalesRequestService from "../../../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
+import { PdvSalesRequestStatus } from "../../../../../../sales/pdv-management/sales-request/pdv-sales-request.types";
+import roleService from "../../../../../../company/users/roles/role.service";
+import { AuditOrigin } from "../../../../../../global/audit-logs/audit-log.types";
 import { cleanDocument } from "../../../../../../../shared/utils/normalizers/document";
 import unitBusinessService from "../../../../../../company/unit-business/unit-business.service";
 import auditLogService from "../../../../../../global/audit-logs/audit-log.service";
@@ -35,6 +41,9 @@ import { AuditEntity } from "../../../../../../global/audit-logs/audit-log.types
 const default_seller = "5ff76374-4d67-4ef3-a566-349a015f86b1";
 
 // CRUD, listagens e detalhe da nota fiscal; usa o queryConfig compartilhado do shared.
+// Escrita interna sem usuário (scan, fluxos automáticos) que porventura mexa no vínculo de transferência.
+const SYSTEM_TRANSFER_LINK_ACTOR: TransferLinkActor = { userId: null, origin: AuditOrigin.SYSTEM };
+
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -54,14 +63,38 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     id: string,
     unitBusinessId: string,
     type?: "INCOMING" | "OUTGOING",
+    roleId?: string | null,
   ) {
-    const invoice = await this.repository.getFullInvoiceWithBatch(
-      id,
-      unitBusinessId,
-      type,
-    );
-    const [withViewPoint] = await this.withViewPoints([invoice], unitBusinessId);
-    return withViewPoint!;
+    const invoice = await this.repository.getFullInvoiceWithBatch(id, unitBusinessId, type);
+    const [[withViewPoint], transferInvoiceEdit] = await Promise.all([
+      this.withViewPoints([invoice], unitBusinessId),
+      this.resolveTransferInvoiceEdit(invoice, roleId),
+    ]);
+    return { ...withViewPoint!, ...transferInvoiceEdit };
+  }
+
+  // Front: pode vincular/trocar/remover a transferência pela tela da nota? Mesmas regras do setTransferInvoice (nota interna não;
+  // solicitação do PDV só da etapa da transferência pra frente; finalizada na emitente ou solicitação FINISHED só admin).
+  private async resolveTransferInvoiceEdit(
+    invoice: { id: string; invoice_operation_id?: string | null },
+    roleId?: string | null,
+  ): Promise<{ can_edit_transfer_invoice: boolean; transfer_invoice_edit_blocked_reason: string | null }> {
+    const [internalOperationId, finishedAtSender, [request]] = await Promise.all([
+      internalInvoiceScopeService.getInternalOperationId(),
+      transferReferenceService.isFinishedAtSender(invoice.id),
+      pdvSalesRequestService.findTransferLinkableBySaleInvoiceIds([invoice.id]),
+    ]);
+    let reason: string | null = null;
+    if (internalOperationId && invoice.invoice_operation_id === internalOperationId) {
+      reason = "Nota interna não tem nota de transferência.";
+    } else if (request && pdvSalesRequestService.transferInvoiceFlowBlockedReason(request)) {
+      reason = pdvSalesRequestService.transferInvoiceFlowBlockedReason(request);
+    } else if (finishedAtSender || request?.status === PdvSalesRequestStatus.FINISHED) {
+      // Role só é consultada quando a nota está finalizada.
+      const isAdmin = !!roleId && (await roleService.isAdminRole(roleId));
+      if (!isAdmin) reason = "Nota de venda finalizada: só administradores podem alterar a nota de transferência.";
+    }
+    return { can_edit_transfer_invoice: !reason, transfer_invoice_edit_blocked_reason: reason };
   }
 
   // GET /:id (show do BaseController) com as flags de view point.
@@ -168,7 +201,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     );
   }
 
-  // Update genérico da nota + atributos da unit business (PUT /:id, lote, scan), com a mesma validação de referência de transferência.
+  // Update genérico da nota + atributos da unit business (PUT /:id, lote, scan); vínculo de transferência vai por setTransferInvoice.
   async updateInvoices(
     invoiceIds: string[],
     unitBusinessId: string,
@@ -180,23 +213,57 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     >,
     attrWhere?: WhereOptions,
     transaction?: Transaction,
+    actor: TransferLinkActor = SYSTEM_TRANSFER_LINK_ACTOR,
   ): Promise<void> {
-    await transferReferenceService.assertTransferReferenceWrite(data, { id: invoiceIds }, transaction);
+    const { transferInvoiceId, rest } = splitTransferLinkWrite(data);
+    if (transferInvoiceId !== undefined) {
+      await this.setTransferInvoice(invoiceIds, transferInvoiceId, actor, transaction);
+    }
     return invoiceAttributesRepository.updateWithAttributes(
       invoiceIds,
       unitBusinessId,
-      data,
+      rest,
       attrWhere,
       transaction,
     );
   }
 
-  // PUT /bulk genérico: mesma validação de transfer_invoice_reference do updateInvoices.
-  async bulkUpdate(data: Partial<Invoice["_creationAttributes"]>, options: UpdateOptions) {
+  // PUT /bulk genérico: vínculo de transferência pelo mesmo setTransferInvoice do updateInvoices.
+  async bulkUpdate(
+    data: Partial<Invoice["_creationAttributes"]>,
+    options: UpdateOptions,
+    actor: TransferLinkActor = SYSTEM_TRANSFER_LINK_ACTOR,
+  ) {
     // PUT /bulk: nota interna só pelos fluxos de internal/.
     await internalInvoiceScopeService.assertNotInternalInvoices(options.where, options.transaction ?? undefined);
-    await transferReferenceService.assertTransferReferenceWrite(data, options.where, options.transaction ?? undefined);
-    return super.bulkUpdate(data, options);
+    const { transferInvoiceId, rest } = splitTransferLinkWrite(data);
+    if (transferInvoiceId !== undefined) {
+      const targets = await this.findAll({ where: options.where, attributes: ["id"], transaction: options.transaction });
+      await this.setTransferInvoice(
+        targets.map((invoice) => invoice.id),
+        transferInvoiceId,
+        actor,
+        options.transaction ?? undefined,
+      );
+    }
+    return super.bulkUpdate(rest, options);
+  }
+
+  // Vínculo de transferência pelo fluxo comum (tela da nota, bulk, lote): nota de venda com solicitação no PDV vai pelo PDV
+  // (etapa, status e sincronia da solicitação); as outras gravam direto, na transação do chamador.
+  async setTransferInvoice(
+    invoiceIds: string[],
+    transferInvoiceId: string | null,
+    actor: TransferLinkActor,
+    transaction?: Transaction,
+  ): Promise<void> {
+    const requests = await pdvSalesRequestService.findTransferLinkableBySaleInvoiceIds(invoiceIds);
+    const viaPdv = new Set(requests.map((request) => request.sale_invoice_id));
+    await Promise.all(
+      requests.map((request) => pdvSalesRequestService.setTransferInvoiceFromInvoiceFlow(request, transferInvoiceId, actor)),
+    );
+    const direct = invoiceIds.filter((id) => !viaPdv.has(id));
+    if (direct.length) await transferReferenceService.linkTransferInvoice(direct, transferInvoiceId, actor, transaction);
   }
 
   async findDeliveryNoteGeneratedInvoiceIds(

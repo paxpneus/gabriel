@@ -38,6 +38,7 @@ const FIELD_LABELS: Record<string, string> = {
   operator_name: "Operador",
   correction_letter_justification: "Justificativa da carta de correção",
   correction_letter_attached_at: "Carta de correção anexada em",
+  transfer_invoice_reference: "Nota de transferência",
 };
 
 // Valor curto e estável pro texto: null/undefined viram "—", booleano vira sim/não, data em horário de Brasília, objeto vira JSON.
@@ -50,7 +51,7 @@ const formatValue = (value: unknown): string => {
 };
 
 // Ids técnicos (uuid) não entram no texto pra leigo — ficam em changes.
-const ID_FIELDS = new Set(["id", "product_id", "unit_business_id", "integrations_id"]);
+const ID_FIELDS = new Set(["id", "product_id", "unit_business_id", "integrations_id", "transfer_invoice_id"]);
 
 // Lista "campo: antes → depois" só dos campos que mudaram; em CREATE/DELETE lista o estado inteiro. Em UPDATE só
 // compara campo presente nos dois lados (campo ausente no antes não é "— → valor", é só não registrado).

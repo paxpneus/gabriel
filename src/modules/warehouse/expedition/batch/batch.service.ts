@@ -49,6 +49,7 @@ import {
   internalInvoiceScopeService,
   INTERNAL_BATCH_REFUSED_MESSAGE,
   INTERNAL_INVOICE_REFUSED_MESSAGE,
+  TransferLinkActor,
 } from "../../fiscal/invoices/invoice";
 import invoiceItemsService from "../../fiscal/invoices/invoice-items/invoice-items.service";
 import { ensureSameBy } from "../../../../shared/utils/validators/same-not-allowed";
@@ -745,6 +746,7 @@ export class ExpeditionBatchService extends BaseService<
           "sender_cnpj",
           "receiver_cnpj",
           "transfer_invoice_reference",
+          "transfer_invoice_id",
           "transporter_name",
         ],
       }),
@@ -812,10 +814,11 @@ async addInvoiceToBatch(
   unitBusinessId: string,
   type: string,
   batchId?: string,
-  transferInvoiceReference?: string,
+  transferInvoiceId?: string,
   externalTransaction?: Transaction,
   blingCheckJobId?: string,
-  options: { internal?: boolean } = {},
+  // transferLinkActor: quem vincula a transferência (auditoria/admin); só a rota logada passa.
+  options: { internal?: boolean; transferLinkActor?: TransferLinkActor } = {},
 ): Promise<ExpeditionBatch> {
   let resultBatchId: string;
   const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
@@ -1033,14 +1036,15 @@ async addInvoiceToBatch(
         transaction: t,
       });
 
-      if (transferInvoiceReference) {
-        // updateInvoices valida 1 nota de venda ↔ 1 transferência — erro desfaz a transação inteira.
+      if (transferInvoiceId) {
+        // updateInvoices valida 1 nota de venda ↔ 1 transferência e grava o "REF: <n>" — erro desfaz a transação inteira.
         await invoiceService.updateInvoices(
           plainInvoices.map((i) => i.id),
           unitBusinessId,
-          { transfer_invoice_reference: transferInvoiceReference },
+          { transfer_invoice_id: transferInvoiceId },
           undefined,
           t,
+          options.transferLinkActor,
         );
       }
 
@@ -1126,7 +1130,8 @@ async addInvoiceToLastOutgoingBatch(
   chavesAcesso: string[],
   unitBusinessId: string,
   type: string,
-  transferInvoiceReference?: string,
+  transferInvoiceId?: string,
+  transferLinkActor?: TransferLinkActor,
 ): Promise<ExpeditionBatch> {
   return sequelize.transaction(async (t) => {
     const unitBusiness = await unitBusinessService.findById(unitBusinessId, {
@@ -1139,8 +1144,10 @@ async addInvoiceToLastOutgoingBatch(
       unitBusinessId,
       type,
       unitBusiness.last_outgoing_batch_pending ?? undefined,
-      transferInvoiceReference,
+      transferInvoiceId,
       t,
+      undefined,
+      { transferLinkActor },
     );
 
     await unitBusinessService.update(

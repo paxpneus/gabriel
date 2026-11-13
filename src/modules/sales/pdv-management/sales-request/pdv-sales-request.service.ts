@@ -42,7 +42,8 @@ import orderService from "../../orders/order/orders.service";
 import paymentMethodService from "../../orders/payment_method/payment_method.service";
 import expeditionBatchService from "../../../warehouse/expedition/batch/batch.service";
 import { buildExpeditionProgress } from "./helpers/expedition-progress";
-import { invoiceCancellationService, invoiceDocumentsService, invoiceIngestionService, invoiceService, transferReferenceService, buildInvoiceReferenceDescription, normalizeInvoiceNumber, internalInvoiceScopeService, notInternalInvoiceWhere } from "../../../warehouse/fiscal/invoices/invoice";
+import { invoiceCancellationService, invoiceDocumentsService, invoiceIngestionService, invoiceService, transferReferenceService, buildInvoiceReferenceDescription, normalizeInvoiceNumber, internalInvoiceScopeService, notInternalInvoiceWhere, TransferLinkActor } from "../../../warehouse/fiscal/invoices/invoice";
+import { AuditOrigin } from "../../../global/audit-logs/audit-log.types";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import roleService from "../../../company/users/roles/role.service";
@@ -1345,6 +1346,14 @@ export class PdvSalesRequestService extends BaseService<
   }
 
   // FINISHED só pra admin logado (ver assertFinishedEditableByAdmin).
+  // Etapas em que a nota de transferência pode ser vinculada/removida pela tela da nota (aguardando NF de transferência pra frente).
+  static readonly TRANSFER_LINKABLE_STATUSES: readonly PdvSalesRequestStatus[] = [
+    PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+    PdvSalesRequestStatus.CRITICAL_ERROR,
+    PdvSalesRequestStatus.SHIPPING,
+    PdvSalesRequestStatus.FINISHED,
+  ];
+
   private static readonly SHIPPING_TYPE_CHANGEABLE_STATUSES: PdvSalesRequestStatus[] =
     [
       PdvSalesRequestStatus.PENDING_NF_SALE,
@@ -1376,7 +1385,15 @@ export class PdvSalesRequestService extends BaseService<
 
     if (request.shipping_type === shippingType) return request;
 
-    // Nota de transferência só existe em ADT — saindo dele, desvincula.
+    // Nota de transferência só existe em ADT — saindo dele, desvincula (nota de venda antes, ver attachTransferInvoice).
+    if (shippingType === PdvShippingType.TRANSPORTADORA) {
+      await this.syncSaleInvoiceTransferReference(
+        request.sale_invoice_id,
+        request.transfer_invoice_id,
+        null,
+        this.transferLinkActor(userId, roleId),
+      );
+    }
     const updated = await this.repository.update(id, {
       shipping_type: shippingType,
       ...(shippingType === PdvShippingType.TRANSPORTADORA && {
@@ -1384,13 +1401,6 @@ export class PdvSalesRequestService extends BaseService<
       }),
     });
     if (!updated) throw new Error("Solicitação não encontrada");
-    if (shippingType === PdvShippingType.TRANSPORTADORA) {
-      await this.syncSaleInvoiceTransferReference(
-        request.sale_invoice_id,
-        request.transfer_invoice_id,
-        null,
-      );
-    }
 
     const description = `Tipo de envio alterado de ${request.shipping_type ?? "não definido"} para ${shippingType}`;
     const target = await this.resolveStatusAfterShippingTypeChange(
@@ -1995,14 +2005,16 @@ export class PdvSalesRequestService extends BaseService<
   // resolveCorrection.
   private async resetForCd21AnalysisRetry(
     request: PdvSalesRequest,
-    params: { userId?: string; description: string },
+    params: { userId?: string; roleId?: string; description: string },
   ): Promise<PdvSalesRequest> {
-    await this.repository.update(request.id, { transfer_invoice_id: null });
+    // Nota de venda antes da solicitação: recusa (nota finalizada sem admin) não deixa a solicitação sem a transferência.
     await this.syncSaleInvoiceTransferReference(
       request.sale_invoice_id,
       request.transfer_invoice_id,
       null,
+      this.transferLinkActor(params.userId, params.roleId),
     );
+    await this.repository.update(request.id, { transfer_invoice_id: null });
     return this.transitionTo(
       request.id,
       PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
@@ -2016,6 +2028,7 @@ export class PdvSalesRequestService extends BaseService<
     id: string,
     params: {
       userId?: string;
+      roleId?: string;
       decision?: "CANCEL" | "EXCHANGE_PRODUCT" | "RETRY_ANALYSIS";
     },
   ): Promise<PdvSalesRequest> {
@@ -2089,6 +2102,7 @@ export class PdvSalesRequestService extends BaseService<
 
       return this.resetForCd21AnalysisRetry(request, {
         userId: params.userId,
+        roleId: params.roleId,
         description: "Loja corrigiu o necessário — reanálise do CD21",
       });
     }
@@ -2329,9 +2343,12 @@ export class PdvSalesRequestService extends BaseService<
       xmlBuffer?: Buffer;
       danfeBuffer?: Buffer;
       danfeMimeType?: string;
-      tcarUpsertQueue: TCarInvoiceQueue;
+      // Só XML/DANFE usam (import na Tecinco); vínculo por id (inclusive vindo da tela da nota) não precisa.
+      tcarUpsertQueue?: TCarInvoiceQueue;
       userId?: string;
       roleId?: string;
+      // Fluxo comum da nota repassa a origem dele (application = USER sem usuário); sem valor, usuário → USER, link → PDV.
+      origin?: AuditOrigin;
     },
   ): Promise<{ salesRequest: PdvSalesRequest; message: string }> {
     // CRITICAL_ERROR: troca da NF é a correção do aviso crítico (mesma trava de romaneio de SHIPPING).
@@ -2387,6 +2404,7 @@ export class PdvSalesRequestService extends BaseService<
         // Valida o XML contra a API da Tecinco (pela chave de acesso) e já
         // upserta a invoice com os itens conciliados — reaproveita o mesmo
         // método usado pela importação manual de XML.
+        if (!params.tcarUpsertQueue) throw new Error("Importação do XML indisponível neste fluxo");
         await params.tcarUpsertQueue.upsertInvoiceFromXml(
           xmlContent,
           branchId,
@@ -2476,6 +2494,7 @@ export class PdvSalesRequestService extends BaseService<
           await uploaderQueue.enqueueUpload(tempFile.id, "INVOICE_DANFE");
           pendingTransferInvoiceImport = true;
 
+          if (!params.tcarUpsertQueue) throw new Error("Importação do DANFE indisponível neste fluxo");
           await params.tcarUpsertQueue.add(
             {
               eventId: `invoice-transfer-${stubId}`,
@@ -2538,6 +2557,7 @@ export class PdvSalesRequestService extends BaseService<
             invoiceId: request.sale_invoice_id,
             invoiceNumber: saleInvoice?.number_system,
             reference: invoice.number_system,
+            transferInvoiceId: invoiceId,
           },
         ],
         "Escolha outra nota de transferência.",
@@ -2546,15 +2566,17 @@ export class PdvSalesRequestService extends BaseService<
 
     const wasAlreadyLinked = !!request.transfer_invoice_id;
 
-    const updated = await this.repository.update(id, {
-      transfer_invoice_id: invoiceId,
-    });
-    if (!updated) throw new Error("Solicitação não encontrada");
+    // Nota de venda primeiro: se a gravação recusar (ex.: nota finalizada sem admin), a solicitação não fica trocada.
     await this.syncSaleInvoiceTransferReference(
       request.sale_invoice_id,
       request.transfer_invoice_id,
       invoiceId,
+      this.transferLinkActor(params.userId, params.roleId, params.origin),
     );
+    const updated = await this.repository.update(id, {
+      transfer_invoice_id: invoiceId,
+    });
+    if (!updated) throw new Error("Solicitação não encontrada");
 
     const productsMatch = pendingTransferInvoiceImport
       ? null
@@ -2655,12 +2677,86 @@ export class PdvSalesRequestService extends BaseService<
     return invoiceProductsMatch(saleItems, transferItems);
   }
 
-  // Nota de venda aponta pra transferência vinculada só via transfer_invoice_reference "REF: <número>" (return_invoice_reference é da devolução).
-  // Ao desvincular, só limpa se bate com a transferência anterior — nunca apaga descrição de outra origem.
+  // Quem mexeu no vínculo da transferência (auditoria da nota de venda): usuário logado ou, sem usuário, o link do PDV.
+  private transferLinkActor(userId?: string | null, roleId?: string | null, origin?: AuditOrigin): TransferLinkActor {
+    let resolvedOrigin = origin ?? AuditOrigin.USER;
+    if (!origin && !userId) resolvedOrigin = AuditOrigin.PDV;
+    return { userId: userId ?? null, roleId: roleId ?? null, origin: resolvedOrigin };
+  }
+
+  // Solicitação de cada nota de venda (FINISHED inclusa) — fluxo comum da nota decide se o vínculo passa pelo PDV.
+  async findTransferLinkableBySaleInvoiceIds(invoiceIds: string[]): Promise<PdvSalesRequest[]> {
+    return this.repository.findTransferLinkableBySaleInvoiceIds(invoiceIds);
+  }
+
+  // Vínculo vindo da tela da nota/bulk/lote em nota com solicitação: só da etapa da transferência pra frente (ADT), senão resolve
+  // pelo PDV. Vincular = attachTransferInvoice; remover = detachTransferInvoice.
+  async setTransferInvoiceFromInvoiceFlow(
+    request: PdvSalesRequest,
+    transferInvoiceId: string | null,
+    actor: TransferLinkActor,
+  ): Promise<void> {
+    const blockedReason = this.transferInvoiceFlowBlockedReason(request);
+    if (blockedReason) throw new Error(blockedReason);
+    if (transferInvoiceId) {
+      await this.attachTransferInvoice(request.id, {
+        invoiceId: transferInvoiceId,
+        userId: actor.userId ?? undefined,
+        roleId: actor.roleId ?? undefined,
+        origin: actor.origin,
+      });
+      return;
+    }
+    await this.detachTransferInvoice(request.id, actor);
+  }
+
+  // Motivo (ou null) pra tela da nota não mexer na transferência da solicitação: fora da etapa da transferência pra frente ou não ADT.
+  transferInvoiceFlowBlockedReason(request: Pick<PdvSalesRequest, "status" | "shipping_type">): string | null {
+    if (
+      PdvSalesRequestService.TRANSFER_LINKABLE_STATUSES.includes(request.status) &&
+      request.shipping_type === PdvShippingType.ADT
+    ) {
+      return null;
+    }
+    return "Essa nota de venda tem uma solicitação no PDV que ainda não está na etapa da nota de transferência — resolva pelo PDV.";
+  }
+
+  // Remove a nota de transferência (tela da nota): SHIPPING/CRITICAL_ERROR voltam pra aguardando NF de transferência;
+  // FINISHED (só admin) e PENDING_NF_TRANSFER ficam onde estão.
+  async detachTransferInvoice(id: string, actor: TransferLinkActor): Promise<PdvSalesRequest> {
+    const request = await this.assertStatus(id, [...PdvSalesRequestService.TRANSFER_LINKABLE_STATUSES]);
+    await this.assertFinishedEditableByAdmin(request, actor.roleId ?? undefined);
+
+    // Remoção pedida explicitamente: limpa a nota de venda (antes da solicitação, ver attachTransferInvoice) mesmo se o vínculo
+    // dela não bater com o da solicitação.
+    if (request.sale_invoice_id) {
+      await transferReferenceService.linkTransferInvoice([request.sale_invoice_id], null, actor);
+    }
+    const updated = await this.repository.update(id, {
+      transfer_invoice_id: null,
+      transfer_invoice_products_match_sale: null,
+    });
+    if (!updated) throw new Error("Solicitação não encontrada");
+
+    const description = "Nota de transferência removida";
+    const userId = actor.userId ?? undefined;
+    if (
+      request.status === PdvSalesRequestStatus.SHIPPING ||
+      request.status === PdvSalesRequestStatus.CRITICAL_ERROR
+    ) {
+      return this.transitionTo(id, PdvSalesRequestStatus.PENDING_NF_TRANSFER, { userId, description });
+    }
+    await this.logAction(request, { userId, description });
+    return updated;
+  }
+
+  // Nota de venda aponta pra transferência vinculada por transfer_invoice_id + "REF: <número>" pra exibição (return_invoice_reference é da devolução).
+  // Ao desvincular, só limpa se bate com a transferência anterior — nunca apaga vínculo de outra origem.
   private async syncSaleInvoiceTransferReference(
     saleInvoiceId: string | null,
     previousTransferInvoiceId: string | null,
     nextTransferInvoiceId: string | null,
+    actor: TransferLinkActor,
   ): Promise<void> {
     if (!saleInvoiceId) return;
     const transferIds = [previousTransferInvoiceId, nextTransferInvoiceId].filter(
@@ -2670,7 +2766,7 @@ export class PdvSalesRequestService extends BaseService<
 
     const [saleInvoice, transferInvoices] = await Promise.all([
       invoiceService.findById(saleInvoiceId, {
-        attributes: ["id", "transfer_invoice_reference"],
+        attributes: ["id", "transfer_invoice_reference", "transfer_invoice_id"],
       }),
       invoiceService.findAll({
         where: { id: { [Op.in]: transferIds } },
@@ -2682,24 +2778,21 @@ export class PdvSalesRequestService extends BaseService<
       transferInvoices.find((invoice) => invoice.id === transferId)
         ?.number_system ?? null;
 
-    const nextNumber = numberOf(nextTransferInvoiceId);
-    if (nextNumber) {
-      await invoiceService.update(saleInvoiceId, {
-        transfer_invoice_reference: buildInvoiceReferenceDescription(nextNumber),
-      });
+    // Gravação + REF + auditoria na nota de venda ficam no linkTransferInvoice (mesmo caminho da tela da nota e do lote).
+    if (nextTransferInvoiceId) {
+      await transferReferenceService.linkTransferInvoice([saleInvoiceId], nextTransferInvoiceId, actor);
       return;
     }
 
     const previousNumber = numberOf(previousTransferInvoiceId);
     if (!previousNumber) return;
-    if (
-      saleInvoice.transfer_invoice_reference !==
-      buildInvoiceReferenceDescription(previousNumber)
-    ) {
-      return;
-    }
+    // Vínculo por id (novo) ou só o texto (antigo, sem transfer_invoice_id) da transferência anterior.
+    const linkedToPrevious = saleInvoice.transfer_invoice_id
+      ? saleInvoice.transfer_invoice_id === previousTransferInvoiceId
+      : saleInvoice.transfer_invoice_reference === buildInvoiceReferenceDescription(previousNumber);
+    if (!linkedToPrevious) return;
 
-    await invoiceService.update(saleInvoiceId, { transfer_invoice_reference: null });
+    await transferReferenceService.linkTransferInvoice([saleInvoiceId], null, actor);
   }
 
   // Avança pra SHIPPING — chamado automaticamente por attachTransferInvoice e
@@ -2978,19 +3071,15 @@ export class PdvSalesRequestService extends BaseService<
   }
 
   // ─── Cancelamento de nota fiscal (Bling/Tecinco) ────────────────────────────
-  // Chamado por invoice-xml.ts e bling-api-fetch.queue.ts quando a nota (venda ou transferência) é cancelada
-  // na integração — vai direto pra CANCELLED, sem decisão do CD21. Só solicitações ativas (FINISHED fica).
+  // Chamado por invoice-xml.ts, bling-api-fetch.queue.ts e tecinco-invoice.queue.ts quando uma nota é cancelada na integração.
+  // Só a nota de VENDA cancela a solicitação (direto pra CANCELLED, sem decisão do CD21, FINISHED fica); nota de transferência cancelada nunca.
   async handleInvoiceCancelled(invoiceId: string): Promise<void> {
-    const affected =
-      await this.repository.findActiveBySaleOrTransferInvoiceId(invoiceId);
+    const affected = await this.repository.findActiveBySaleInvoiceIds([invoiceId], ["id"]);
 
     await Promise.all(
       affected.map((request) =>
         this.transitionTo(request.id, PdvSalesRequestStatus.CANCELLED, {
-          description:
-            request.transfer_invoice_id === invoiceId
-              ? "Nota de transferência vinculada foi cancelada"
-              : "Nota de venda vinculada foi cancelada",
+          description: "Nota de venda vinculada foi cancelada",
         }),
       ),
     );
@@ -3005,6 +3094,7 @@ export class PdvSalesRequestService extends BaseService<
     params: {
       decision: "RETRY_ANALYSIS" | "REQUEST_CORRECTION";
       userId?: string;
+      roleId?: string;
       note?: string;
     },
   ): Promise<PdvSalesRequest> {
@@ -3016,6 +3106,7 @@ export class PdvSalesRequestService extends BaseService<
     if (params.decision === "RETRY_ANALYSIS") {
       return this.resetForCd21AnalysisRetry(request, {
         userId: params.userId,
+        roleId: params.roleId,
         description: "CD21 optou por reenviar para análise após nota cancelada",
       });
     }
@@ -3130,6 +3221,14 @@ export class PdvSalesRequestService extends BaseService<
       );
     }
 
+    // Nota de venda antes de tudo: se o desvínculo for recusado (nota finalizada sem admin), a solicitação não fica excluída pela metade.
+    await this.syncSaleInvoiceTransferReference(
+      request.sale_invoice_id,
+      request.transfer_invoice_id,
+      null,
+      this.transferLinkActor(),
+    );
+
     // Um arquivo por comprovante — em paralelo (Promise.all), nunca um await
     // por iteração (N+1).
     const receipts = await pdvSalesRequestReceiptService.findAllByRequestId(id);
@@ -3174,11 +3273,6 @@ export class PdvSalesRequestService extends BaseService<
         { transaction: t },
       );
     });
-    await this.syncSaleInvoiceTransferReference(
-      request.sale_invoice_id,
-      request.transfer_invoice_id,
-      null,
-    );
 
     notifySalesRequestChanged({
       id: request.id,

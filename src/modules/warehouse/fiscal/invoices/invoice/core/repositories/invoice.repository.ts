@@ -3,6 +3,7 @@ import {
   FullInvoiceAttributes,
   FullInvoiceForAllUnits,
   FullInvoiceMappedForFrontend,
+  TransferInvoiceSummary,
 } from "../../invoice.types";
 import { PendingBatchByTransporterRow } from "../types/core.types";
 import BaseRepository from "../../../../../../../shared/utils/base-models/base-repository";
@@ -478,6 +479,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           as: "originUnitBusiness",
           attributes: ["id", "name", "number", "cnpj"],
         },
+        {
+          model: Invoice,
+          as: "transferInvoice",
+          required: false,
+          attributes: ["id", "number_system", "sender_cnpj", "receiver_cnpj", "emitted_at"],
+        },
       ],
     });
 
@@ -520,13 +527,26 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       ]) ?? [],
     );
 
-    // Cards "Loja Emissora"/"Loja Destinatária": mesmo nome das listagens (null se o CNPJ não é de loja).
+    // Cards "Loja Emissora"/"Loja Destinatária" (da nota e da transferência vinculada): mesmo nome das listagens (null se o CNPJ não é de loja).
+    const transfer = plain.transferInvoice;
     const unitBusinessNames = await invoiceAttributesRepository.findUnitBusinessNamesByCnpj(
-      [plain.sender_cnpj, plain.receiver_cnpj].filter(Boolean),
+      [plain.sender_cnpj, plain.receiver_cnpj, transfer?.sender_cnpj, transfer?.receiver_cnpj].filter(Boolean),
     );
+    // Transferência vinculada já resolvida (null sem vínculo, inclusive nota antiga só com o texto REF).
+    let transferInvoice: TransferInvoiceSummary | null = null;
+    if (transfer) {
+      transferInvoice = {
+        id: transfer.id,
+        number_system: transfer.number_system,
+        sender_unit_business_name: unitBusinessNames.get(transfer.sender_cnpj) ?? null,
+        receiver_unit_business_name: unitBusinessNames.get(transfer.receiver_cnpj) ?? null,
+        emitted_at: transfer.emitted_at,
+      };
+    }
 
     return {
       ...plain,
+      transferInvoice,
       sender_unit_business_name: unitBusinessNames.get(plain.sender_cnpj) ?? null,
       receiver_unit_business_name: unitBusinessNames.get(plain.receiver_cnpj) ?? null,
       unitBusinessAttributes: plain.unitBusinessAttributes?.[0] ?? null,

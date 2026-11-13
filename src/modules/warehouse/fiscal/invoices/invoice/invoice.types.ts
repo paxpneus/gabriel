@@ -52,6 +52,7 @@ export interface InvoiceAttributes {
   total_read?: number;
   total_expected?: number;
   transfer_invoice_reference?: string | null;
+  transfer_invoice_id?: string | null;
   return_invoice_reference?: string | null;
   observation?: string | null;
   invoice_series?: string | null;
@@ -121,6 +122,7 @@ export interface FullInvoiceAttributes {
   total_expected?: number;
   delivery_note_generated?: boolean;
   transfer_invoice_reference?: string | null;
+  transfer_invoice_id?: string | null;
   return_invoice_reference?: string | null;
   observation?: string | null;
   invoice_series?: string | null;
@@ -184,6 +186,7 @@ export interface FullInvoiceAttributesForAllUnits {
   total_read?: number;
   total_expected?: number;
   transfer_invoice_reference?: string | null;
+  transfer_invoice_id?: string | null;
   return_invoice_reference?: string | null;
   observation?: string | null;
   invoice_series?: string | null;
@@ -226,9 +229,19 @@ export interface FullInvoice extends FullInvoiceAttributes {
   items: InvoiceItems[];
 }
 
+// Transferência vinculada à nota de venda, resolvida no detalhe (GET /full/:id).
+export interface TransferInvoiceSummary {
+  id: string;
+  number_system: string | null;
+  sender_unit_business_name: string | null;
+  receiver_unit_business_name: string | null;
+  emitted_at: Date | null;
+}
+
 export interface FullInvoiceMappedForFrontend extends FullInvoiceAttributes {
   unmappedProducts?: UnmappedInvoiceProduct[];
   items: InvoiceItemsWithBatchAttributes[];
+  transferInvoice?: TransferInvoiceSummary | null;
 }
 
 export interface FullInvoiceForAllUnits extends FullInvoiceAttributesForAllUnits {

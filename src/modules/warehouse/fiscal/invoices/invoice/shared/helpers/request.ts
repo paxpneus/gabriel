@@ -1,4 +1,6 @@
 import { Request } from "express";
+import { getRequestUserId } from "../../../../../../../shared/query/get-logged-user";
+import { AuditOrigin } from "../../../../../../global/audit-logs/audit-log.types";
 
 // Helpers de request das rotas de nota (unit business vinda de params/query/filters), usados por vários controllers.
 
@@ -25,4 +27,9 @@ export function resolveUnitBusinessId(
   contextUnitBusinessId: string,
 ): string {
   return extractUnitBusinessIdFromRequest(req) ?? contextUnitBusinessId;
+}
+
+// Quem altera o vínculo de transferência numa rota logada (PUT /:id, PUT /bulk, lote): usuário + role (regra de admin).
+export function transferLinkActorFromRequest(req: Request): { userId: string | null; roleId: string | null; origin: AuditOrigin } {
+  return { userId: getRequestUserId(req), roleId: (req as any).user?.role ?? null, origin: AuditOrigin.USER };
 }

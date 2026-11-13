@@ -241,20 +241,6 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
     });
   }
 
-  async findActiveBySaleOrTransferInvoiceId(
-    invoiceId: string,
-  ): Promise<PdvSalesRequest[]> {
-    return this.findAll({
-      where: {
-        [Op.or]: [
-          { sale_invoice_id: invoiceId },
-          { transfer_invoice_id: invoiceId },
-        ],
-        status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
-      },
-    });
-  }
-
   // Cancelamento por devolução da nota de venda — qualquer status, inclusive FINISHED/INVOICE_CANCELLED.
   async findNotCancelledBySaleInvoiceId(
     saleInvoiceId: string,
@@ -271,6 +257,33 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
       },
       attributes: ["id"],
     });
+  }
+
+  // Solicitação de cada nota de VENDA (mais recente, sem cancelada/excluída — FINISHED entra) pro vínculo de transferência
+  // pelo fluxo comum da nota.
+  async findTransferLinkableBySaleInvoiceIds(invoiceIds: string[]): Promise<PdvSalesRequest[]> {
+    if (!invoiceIds.length) return [];
+    const rows = await this.findAll({
+      where: {
+        sale_invoice_id: { [Op.in]: invoiceIds },
+        status: {
+          [Op.notIn]: [
+            PdvSalesRequestStatus.CANCELLED,
+            PdvSalesRequestStatus.INVOICE_CANCELLED,
+            PdvSalesRequestStatus.EXCLUDED,
+          ],
+        },
+      },
+      attributes: ["id", "sale_invoice_id", "status", "shipping_type", "transfer_invoice_id", "unit_business_id"],
+      order: [["createdAt", "DESC"]],
+    });
+    const latestBySaleInvoice = new Map<string, PdvSalesRequest>();
+    for (const row of rows) {
+      if (row.sale_invoice_id && !latestBySaleInvoice.has(row.sale_invoice_id)) {
+        latestBySaleInvoice.set(row.sale_invoice_id, row);
+      }
+    }
+    return [...latestBySaleInvoice.values()];
   }
 
   // Candidatas ao auto-finish (finishIfDeliveryNoteGenerated) — qualquer

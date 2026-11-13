@@ -12,6 +12,7 @@ interface SaleInvoice {
   number_system?: string | null;
   sender_cnpj?: string | null;
   transfer_invoice_reference?: string | null;
+  transfer_invoice_id?: string | null;
   transporter_name?: string | null;
 }
 
@@ -32,30 +33,38 @@ export function isCd21TransferQrRule(
   });
 }
 
-// Ids das notas de transferência (de outra loja → loja que leu) apontadas por "REF: <número>" em cada nota de venda.
+// Ids das notas de transferência (de outra loja → loja que leu) de cada nota de venda: pelo vínculo (transfer_invoice_id) ou,
+// em nota antiga sem vínculo, pelo número em "REF: <número>".
 export async function resolveCd21TransferInvoiceIds(
   invoices: SaleInvoice[],
   readerCnpj: string,
 ): Promise<string[]> {
   const referenced = invoices.map((invoice) => ({
     invoice,
-    transferNumber: extractTransferReferenceNumber(invoice.transfer_invoice_reference),
+    transferId: invoice.transfer_invoice_id ?? null,
+    transferNumber: invoice.transfer_invoice_id ? null : extractTransferReferenceNumber(invoice.transfer_invoice_reference),
   }));
-  const withoutReference = referenced.filter((ref) => !ref.transferNumber);
+  const withoutReference = referenced.filter((ref) => !ref.transferId && !ref.transferNumber);
   if (withoutReference.length) {
     throw new Error(
       `Nota(s) de venda sem número da nota de transferência: ${withoutReference.map((ref) => ref.invoice.number_system).join(", ")}.`,
     );
   }
 
-  const numbers = [...new Set(referenced.map((ref) => ref.transferNumber as string))];
-  const transfers = await transferReferenceService.findTransfersToReceiverByNumbers(numbers, readerCnpj);
+  const ids = [...new Set(referenced.map((ref) => ref.transferId).filter((id): id is string => !!id))];
+  const numbers = [...new Set(referenced.map((ref) => ref.transferNumber).filter((n): n is string => !!n))];
+  const transfers = await transferReferenceService.findTransfersToReceiver({ ids, numbers }, readerCnpj);
+  const foundIds = new Set(transfers.map((transfer) => transfer.id));
   const foundNumbers = new Set(transfers.map((transfer) => transfer.normalized_number));
-  const notFound = referenced.filter((ref) => !foundNumbers.has(ref.transferNumber as string));
+  const notFound = referenced.filter((ref) => {
+    if (ref.transferId) return !foundIds.has(ref.transferId);
+    return !foundNumbers.has(ref.transferNumber as string);
+  });
   if (notFound.length) {
     throw new Error(
-      `Nota(s) de transferência para esta loja não encontradas no sistema: ${notFound.map((ref) => `${ref.transferNumber} (ref. a nota de venda ${ref.invoice.number_system})`).join(", ")}.`,
+      `Nota(s) de transferência para esta loja não encontradas no sistema: ${notFound.map((ref) => `${ref.transferNumber ?? ref.invoice.transfer_invoice_reference ?? ""} (ref. a nota de venda ${ref.invoice.number_system})`).join(", ")}.`,
     );
   }
+  // Por número (antigo) entra toda transferência com aquele número pra esta loja, como antes.
   return [...new Set(transfers.map((transfer) => transfer.id))];
 }

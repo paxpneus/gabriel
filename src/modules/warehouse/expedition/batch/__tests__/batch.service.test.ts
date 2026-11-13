@@ -48,7 +48,7 @@ jest.mock("../../../fiscal/invoices/invoice", () => ({
   // Sem operação interna cadastrada: guarda de nota interna não interfere nos cenários daqui.
   internalInvoiceScopeService: { getInternalOperationId: async () => null },
   invoiceService: { findAll: jest.fn(), findOne: jest.fn() },
-  transferReferenceService: { findTransfersToReceiverByNumbers: jest.fn() },
+  transferReferenceService: { findTransfersToReceiver: jest.fn() },
 }));
 
 jest.mock(
@@ -207,7 +207,7 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
   });
 
   describe("addInvoiceToBatch", () => {
-    describe("com transfer_invoice_reference (validação 1 venda ↔ 1 transferência fica no updateInvoices)", () => {
+    describe("com transfer_invoice_id (validação 1 venda ↔ 1 transferência fica no updateInvoices)", () => {
       const keys = ["29260802036483000614550010004404561245674661", "29260802036483000614550010004404561245674662"];
 
       beforeEach(() => {
@@ -221,7 +221,7 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
         (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([]);
       });
 
-      it("lote existente: grava a referência nas notas novas na transação — erro do updateInvoices propaga", async () => {
+      it("lote existente: grava o vínculo nas notas novas na transação — erro do updateInvoices propaga", async () => {
         jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-1" } as any);
         jest
           .spyOn(service, "findByIdFullBatch")
@@ -231,15 +231,16 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
         (invoiceService as any).updateInvoices = jest.fn().mockRejectedValue(new Error("já vinculada"));
 
         await expect(
-          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-1", "REF: 28921"),
+          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-1", "transfer-1"),
         ).rejects.toThrow("já vinculada");
 
         expect((invoiceService as any).updateInvoices).toHaveBeenCalledWith(
           ["invoice-1", "invoice-2"],
           "ub-1",
-          { transfer_invoice_reference: "REF: 28921" },
+          { transfer_invoice_id: "transfer-1" },
           undefined,
           mockTransaction,
+          undefined,
         );
       });
 
@@ -257,12 +258,12 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
         expect(batchInvoicesService.createBatchInvoiceWithItems).not.toHaveBeenCalled();
       });
 
-      it("lote novo (texto ignorado ao criar) → não grava nem valida a referência", async () => {
+      it("lote novo (vínculo ignorado ao criar) → não grava nem valida a transferência", async () => {
         (invoiceService as any).updateInvoices = jest.fn();
         jest.spyOn(service as any, "createBatchStructure").mockRejectedValue(new Error("SENTINEL_CRIOU"));
 
         await expect(
-          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", undefined, "REF: 28921"),
+          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", undefined, "transfer-1"),
         ).rejects.toThrow("SENTINEL_CRIOU");
 
         expect((invoiceService as any).updateInvoices).not.toHaveBeenCalled();
@@ -1405,19 +1406,54 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
           sale("inv-1", "1001", "REF: 437", transporter),
           sale("inv-2", "1002", "REF: 0438", transporter),
         ]);
-        (transferReferenceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([
+        (transferReferenceService.findTransfersToReceiver as jest.Mock).mockResolvedValue([
           { id: "tr-1", number_system: "000437", normalized_number: "437" },
           { id: "tr-2", number_system: "438", normalized_number: "438" },
         ]);
 
         await service.generateBatchFromQrCode("src-batch", "ub-1", undefined, "REGULAR", "job-1");
 
-        expect(transferReferenceService.findTransfersToReceiverByNumbers).toHaveBeenCalledWith(["437", "438"], STORE_CNPJ);
+        expect(transferReferenceService.findTransfersToReceiver).toHaveBeenCalledWith(
+          { ids: [], numbers: ["437", "438"] },
+          STORE_CNPJ,
+        );
         expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
           ["tr-1", "tr-2"], "ub-1", "INCOMING", "REGULAR", "job-1",
         );
       },
     );
+
+    it("venda com vínculo (transfer_invoice_id) → busca pelo id, não pelo número da REF", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { ...sale("inv-1", "1001", "REF: 437", null), transfer_invoice_id: "tr-9" },
+        sale("inv-2", "1002", "REF: 438", null),
+      ]);
+      (transferReferenceService.findTransfersToReceiver as jest.Mock).mockResolvedValue([
+        { id: "tr-9", number_system: "437", normalized_number: "437" },
+        { id: "tr-2", number_system: "438", normalized_number: "438" },
+      ]);
+
+      await service.generateBatchFromQrCode("src-batch", "ub-1", undefined, "REGULAR", "job-1");
+
+      expect(transferReferenceService.findTransfersToReceiver).toHaveBeenCalledWith(
+        { ids: ["tr-9"], numbers: ["438"] },
+        STORE_CNPJ,
+      );
+      expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
+        ["tr-9", "tr-2"], "ub-1", "INCOMING", "REGULAR", "job-1",
+      );
+    });
+
+    it("vínculo por id que não é pra esta loja → erro", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { ...sale("inv-1", "1001", "REF: 437", null), transfer_invoice_id: "tr-9" },
+      ]);
+      (transferReferenceService.findTransfersToReceiver as jest.Mock).mockResolvedValue([]);
+
+      await expect(service.generateBatchFromQrCode("src-batch", "ub-1")).rejects.toThrow(
+        "REF: 437 (ref. a nota de venda 1001)",
+      );
+    });
 
     it("venda sem REF → erro e nenhum lote", async () => {
       (invoiceService.findAll as jest.Mock).mockResolvedValue([sale("inv-1", "1001", null, null)]);
@@ -1430,7 +1466,7 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
 
     it("transferência não encontrada pra esta loja → erro com número e venda", async () => {
       (invoiceService.findAll as jest.Mock).mockResolvedValue([sale("inv-1", "1001", "REF: 437", null)]);
-      (transferReferenceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([]);
+      (transferReferenceService.findTransfersToReceiver as jest.Mock).mockResolvedValue([]);
 
       await expect(service.generateBatchFromQrCode("src-batch", "ub-1")).rejects.toThrow(
         "437 (ref. a nota de venda 1001)",
@@ -1454,7 +1490,7 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
 
       await service.generateBatchFromQrCode("src-batch", "ub-1").catch(() => undefined);
 
-      expect(transferReferenceService.findTransfersToReceiverByNumbers).not.toHaveBeenCalled();
+      expect(transferReferenceService.findTransfersToReceiver).not.toHaveBeenCalled();
     });
   });
 });

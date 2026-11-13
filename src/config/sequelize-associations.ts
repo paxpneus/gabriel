@@ -361,6 +361,12 @@ UnitBusiness.belongsTo(ExpeditionBatch, {
     as: "transporter",
   });
 
+  // Nota de venda -> nota de transferência vinculada (detalhe GET /invoice/full/:id)
+  Invoice.belongsTo(Invoice, {
+    foreignKey: "transfer_invoice_id",
+    as: "transferInvoice",
+  });
+
   Transporter.hasMany(CarrierLabelRange, {
     foreignKey: "transporter_id",
     as: "labelRange",

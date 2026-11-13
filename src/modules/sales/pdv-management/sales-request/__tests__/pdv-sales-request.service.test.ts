@@ -22,7 +22,6 @@ jest.mock("../pdv-sales-request.repository", () => ({
     findActiveByOrderId: jest.fn(),
     findByOrderId: jest.fn(),
     findLatestByOrderId: jest.fn(),
-    findActiveBySaleOrTransferInvoiceId: jest.fn(),
     findActiveBySaleInvoiceIds: jest.fn(),
     findNotCancelledBySaleInvoiceId: jest.fn(),
     countGroupedByStatus: jest.fn(),
@@ -87,7 +86,7 @@ jest.mock("../../../../warehouse/fiscal/invoices/invoice", () => ({
   internalInvoiceScopeService: { getInternalOperationId: jest.fn().mockResolvedValue("op-internal") },
   invoiceService: { findById: jest.fn(), findOne: jest.fn(), findAll: jest.fn(), findDeliveryNoteGeneratedInvoiceIds: jest.fn(), update: jest.fn() },
   invoiceIngestionService: { createStub: jest.fn() },
-  transferReferenceService: { assertTransferReferences: jest.fn() },
+  transferReferenceService: { assertTransferReferences: jest.fn(), linkTransferInvoice: jest.fn() },
 }));
 
 jest.mock(
@@ -3010,7 +3009,7 @@ describe("PdvSalesRequestService", () => {
       ).rejects.toThrow("já vinculada");
 
       expect(transferReferenceService.assertTransferReferences).toHaveBeenCalledWith(
-        [{ invoiceId: "invoice-sale", invoiceNumber: "019794", reference: "28921" }],
+        [{ invoiceId: "invoice-sale", invoiceNumber: "019794", reference: "28921", transferInvoiceId: "invoice-transfer" }],
         "Escolha outra nota de transferência.",
       );
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
@@ -4077,51 +4076,39 @@ describe("PdvSalesRequestService", () => {
   // ─── handleInvoiceCancelled ─────────────────────────────────────────────────
 
   describe("handleInvoiceCancelled", () => {
-    it("move direto pra CANCELLED toda solicitação ativa que referencia a nota, seja como venda ou transferência", async () => {
-      (
-        pdvSalesRequestRepository.findActiveBySaleOrTransferInvoiceId as jest.Mock
-      ).mockResolvedValue([
-        {
-          id: "r-sale",
-          sale_invoice_id: "invoice-x",
-          transfer_invoice_id: null,
-        },
-        {
-          id: "r-transfer",
-          sale_invoice_id: null,
-          transfer_invoice_id: "invoice-x",
-        },
+    it("nota de VENDA cancelada move direto pra CANCELLED a solicitação ativa dela", async () => {
+      (pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock).mockResolvedValue([
+        { id: "r-sale", sale_invoice_id: "invoice-x", transfer_invoice_id: null },
       ]);
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({});
 
       await service.handleInvoiceCancelled("invoice-x");
 
-      expect(
-        pdvSalesRequestRepository.findActiveBySaleOrTransferInvoiceId,
-      ).toHaveBeenCalledWith("invoice-x");
+      expect(pdvSalesRequestRepository.findActiveBySaleInvoiceIds).toHaveBeenCalledWith(["invoice-x"], ["id"]);
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r-sale",
         { status: PdvSalesRequestStatus.CANCELLED },
         { transaction: mockTransaction },
       );
-      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
-        "r-transfer",
-        { status: PdvSalesRequestStatus.CANCELLED },
-        { transaction: mockTransaction },
-      );
       expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          pdv_sales_request_id: "r-transfer",
-          description: expect.stringContaining("transferência"),
-        }),
+        expect.objectContaining({ pdv_sales_request_id: "r-sale", description: "Nota de venda vinculada foi cancelada" }),
         { transaction: mockTransaction },
       );
     });
 
+    // Regra de produto: transferência cancelada nunca cancela a solicitação (a busca é só pela nota de venda).
+    it("nota de TRANSFERÊNCIA cancelada não cancela solicitação nenhuma", async () => {
+      (pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock).mockResolvedValue([]);
+
+      await service.handleInvoiceCancelled("transfer-x");
+
+      expect(pdvSalesRequestRepository.findActiveBySaleInvoiceIds).toHaveBeenCalledWith(["transfer-x"], ["id"]);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+      expect(pdvSalesRequestHistoryService.create).not.toHaveBeenCalled();
+    });
+
     it("solicitação já FINISHED/CANCELLED não é afetada (o repository já filtra por status ativo)", async () => {
-      (
-        pdvSalesRequestRepository.findActiveBySaleOrTransferInvoiceId as jest.Mock
-      ).mockResolvedValue([]);
+      (pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock).mockResolvedValue([]);
 
       await service.handleInvoiceCancelled("invoice-x");
 
@@ -4192,6 +4179,63 @@ describe("PdvSalesRequestService", () => {
           decision: "RETRY_ANALYSIS",
         }),
       ).rejects.toThrow(/Ação inválida/);
+    });
+  });
+
+  // Desvínculos automáticos (excluir solicitação, reanálise do CD21): nota de venda antes da solicitação, como em attach/changeShippingType.
+  describe("desvínculo automático — nota de venda antes da solicitação", () => {
+    const mockLinkedRequest = (status: PdvSalesRequestStatus) => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status,
+        sale_invoice_id: "inv-sale",
+        transfer_invoice_id: "inv-old",
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({ id: "r1" });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "inv-sale",
+        transfer_invoice_id: "inv-old",
+        transfer_invoice_reference: "REF: 900",
+      });
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([{ id: "inv-old", number_system: "900" }]);
+    };
+
+    it("deleteRequest: desvínculo recusado (nota finalizada) não deixa a solicitação excluída pela metade", async () => {
+      mockLinkedRequest(PdvSalesRequestStatus.PENDING_CORRECTION);
+      (transferReferenceService.linkTransferInvoice as jest.Mock).mockRejectedValueOnce(new Error("Apenas administradores"));
+      (pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock).mockResolvedValue([]);
+      (pdvSalesRequestReceiptService as any).deleteAllByRequestId = jest.fn();
+      (pdvSalesRequestHistoryService as any).deleteAllByRequestId = jest.fn();
+
+      await expect(service.deleteRequest("r1")).rejects.toThrow("Apenas administradores");
+
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+      expect((pdvSalesRequestHistoryService as any).deleteAllByRequestId).not.toHaveBeenCalled();
+      expect(notifySalesRequestChanged).not.toHaveBeenCalled();
+    });
+
+    it("RETRY_ANALYSIS: desvínculo recusado mantém a transferência na solicitação (INVOICE_CANCELLED)", async () => {
+      mockLinkedRequest(PdvSalesRequestStatus.INVOICE_CANCELLED);
+      (transferReferenceService.linkTransferInvoice as jest.Mock).mockRejectedValueOnce(new Error("Apenas administradores"));
+
+      await expect(service.cd21ResolveInvoiceCancelled("r1", { decision: "RETRY_ANALYSIS" })).rejects.toThrow(
+        "Apenas administradores",
+      );
+
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("RETRY_ANALYSIS: repassa o papel de quem decidiu (admin consegue desvincular nota finalizada)", async () => {
+      mockLinkedRequest(PdvSalesRequestStatus.INVOICE_CANCELLED);
+
+      await service.cd21ResolveInvoiceCancelled("r1", { decision: "RETRY_ANALYSIS", userId: "u1", roleId: "role-admin" });
+
+      expect(transferReferenceService.linkTransferInvoice).toHaveBeenCalledWith(["inv-sale"], null, {
+        userId: "u1",
+        roleId: "role-admin",
+        origin: "USER",
+      });
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", { transfer_invoice_id: null });
     });
   });
 
@@ -5109,7 +5153,92 @@ describe("PdvSalesRequestService", () => {
     });
   });
 
-  describe("nota de venda ⇄ nota de transferência (só transfer_invoice_reference — return_invoice_reference é da devolução)", () => {
+  describe("nota de transferência pela tela da nota (setTransferInvoiceFromInvoiceFlow / detachTransferInvoice)", () => {
+    const actor = { userId: "u1", roleId: "role-1", origin: "USER" as any };
+    const mockRequest = (overrides: Record<string, unknown>) => {
+      const request = {
+        id: "r1",
+        order_id: "o1",
+        unit_business_id: "ub1",
+        sale_invoice_id: "inv-sale",
+        shipping_type: PdvShippingType.ADT,
+        transfer_invoice_id: "inv-old",
+        ...overrides,
+      };
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue(request);
+      (pdvSalesRequestRepository.update as jest.Mock).mockImplementation(
+        async (id: string, values: Record<string, unknown>) => ({ ...request, id, ...values }),
+      );
+      return request as any;
+    };
+
+    it.each([
+      [PdvSalesRequestStatus.PENDING_NF_SALE, PdvShippingType.ADT],
+      [PdvSalesRequestStatus.PENDING_FINANCE, PdvShippingType.ADT],
+      [PdvSalesRequestStatus.FINISHED, PdvShippingType.TRANSPORTADORA],
+    ])("solicitação em %s (%s) → bloqueia e manda resolver pelo PDV", async (status, shippingType) => {
+      const request = mockRequest({ status, shipping_type: shippingType });
+
+      await expect(service.setTransferInvoiceFromInvoiceFlow(request, "inv-new", actor)).rejects.toThrow("resolva pelo PDV");
+      expect(transferReferenceService.linkTransferInvoice).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it.each([PdvSalesRequestStatus.SHIPPING, PdvSalesRequestStatus.CRITICAL_ERROR])(
+      "remover em %s → limpa a nota de venda e volta pra aguardando NF de transferência",
+      async (status) => {
+        const request = mockRequest({ status });
+
+        await service.setTransferInvoiceFromInvoiceFlow(request, null, actor);
+
+        expect(transferReferenceService.linkTransferInvoice).toHaveBeenCalledWith(["inv-sale"], null, actor);
+        expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+          transfer_invoice_id: null,
+          transfer_invoice_products_match_sale: null,
+        });
+        expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+          "r1",
+          expect.objectContaining({ status: PdvSalesRequestStatus.PENDING_NF_TRANSFER }),
+          expect.anything(),
+        );
+      },
+    );
+
+    it("remover em FINISHED (admin) → limpa e continua FINISHED", async () => {
+      const request = mockRequest({ status: PdvSalesRequestStatus.FINISHED });
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(true);
+
+      await service.setTransferInvoiceFromInvoiceFlow(request, null, actor);
+
+      expect(transferReferenceService.linkTransferInvoice).toHaveBeenCalledWith(["inv-sale"], null, actor);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalledWith(
+        "r1",
+        expect.objectContaining({ status: expect.anything() }),
+        expect.anything(),
+      );
+    });
+
+    it("remover em FINISHED sem admin → recusa sem mexer em nada", async () => {
+      const request = mockRequest({ status: PdvSalesRequestStatus.FINISHED });
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(false);
+
+      await expect(service.setTransferInvoiceFromInvoiceFlow(request, null, actor)).rejects.toThrow(
+        "Apenas administradores logados",
+      );
+      expect(transferReferenceService.linkTransferInvoice).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("gravação na nota recusada (ex.: finalizada sem admin) → solicitação não muda", async () => {
+      const request = mockRequest({ status: PdvSalesRequestStatus.SHIPPING });
+      (transferReferenceService.linkTransferInvoice as jest.Mock).mockRejectedValueOnce(new Error("Apenas administradores"));
+
+      await expect(service.setTransferInvoiceFromInvoiceFlow(request, null, actor)).rejects.toThrow("Apenas administradores");
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("nota de venda ⇄ nota de transferência (transfer_invoice_id + REF — return_invoice_reference é da devolução)", () => {
     const mockAttach = (request: Record<string, unknown>) => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -5129,7 +5258,7 @@ describe("PdvSalesRequestService", () => {
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({ id: "r1" });
     };
 
-    it("vincular transferência grava só REF na nota de venda", async () => {
+    it("vincular transferência grava o id e o REF na nota de venda", async () => {
       mockAttach({ status: PdvSalesRequestStatus.PENDING_NF_TRANSFER, transfer_invoice_id: null });
       (invoiceService.findAll as jest.Mock).mockResolvedValue([
         { id: "inv-transfer", number_system: "020309" },
@@ -5140,8 +5269,10 @@ describe("PdvSalesRequestService", () => {
         tcarUpsertQueue: {} as any,
       });
 
-      expect(invoiceService.update).toHaveBeenCalledWith("inv-sale", {
-        transfer_invoice_reference: "REF: 20309",
+      expect(transferReferenceService.linkTransferInvoice).toHaveBeenCalledWith(["inv-sale"], "inv-transfer", {
+        userId: null,
+        roleId: null,
+        origin: "PDV",
       });
     });
 
@@ -5157,9 +5288,7 @@ describe("PdvSalesRequestService", () => {
         tcarUpsertQueue: {} as any,
       });
 
-      expect(invoiceService.update).toHaveBeenCalledWith("inv-sale", {
-        transfer_invoice_reference: "REF: 901",
-      });
+      expect(transferReferenceService.linkTransferInvoice).toHaveBeenCalledWith(["inv-sale"], "inv-new", expect.anything());
     });
 
     it("desvincular (ADT → TRANSPORTADORA) com referência de outra origem: não toca na nota (nem no return_invoice_reference)", async () => {
@@ -5187,10 +5316,39 @@ describe("PdvSalesRequestService", () => {
 
       await service.changeShippingType("r1", PdvShippingType.TRANSPORTADORA);
 
+      expect(transferReferenceService.linkTransferInvoice).not.toHaveBeenCalled();
       expect(invoiceService.update).not.toHaveBeenCalledWith(
         "inv-sale",
         expect.anything(),
       );
+    });
+
+    it("desvincular com vínculo por id da transferência anterior: limpa mesmo com REF de outro texto", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIPPING,
+        shipping_type: PdvShippingType.ADT,
+        sale_invoice_id: "inv-sale",
+        transfer_invoice_id: "inv-old",
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockImplementation(
+        async (id: string, values: Record<string, unknown>) => ({ id, ...values }),
+      );
+      (invoiceService.findById as jest.Mock).mockImplementation(async (id: string) => ({
+        id,
+        transporter_name: "JADLOG LOGISTICA S.A",
+        transfer_invoice_id: "inv-old",
+        transfer_invoice_reference: "REF: 123",
+      }));
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { id: "inv-old", number_system: "0900" },
+      ]);
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({ id: "cd21" });
+      (invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock).mockResolvedValue([]);
+
+      await service.changeShippingType("r1", PdvShippingType.TRANSPORTADORA);
+
+      expect(transferReferenceService.linkTransferInvoice).toHaveBeenCalledWith(["inv-sale"], null, expect.anything());
     });
 
     it("desvincular com REF da transferência anterior: limpa a referência", async () => {
@@ -5217,9 +5375,7 @@ describe("PdvSalesRequestService", () => {
 
       await service.changeShippingType("r1", PdvShippingType.TRANSPORTADORA);
 
-      expect(invoiceService.update).toHaveBeenCalledWith("inv-sale", {
-        transfer_invoice_reference: null,
-      });
+      expect(transferReferenceService.linkTransferInvoice).toHaveBeenCalledWith(["inv-sale"], null, expect.anything());
     });
   });
 
