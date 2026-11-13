@@ -1,6 +1,6 @@
 import { cachedReport, REPORT_CACHE_NAMES } from "../../../../helpers/report-cache";
 import { QueryParams } from "../../../../../../shared/query/query.types";
-import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../../../../warehouse/fiscal/invoices/invoice";
 import { SaleTransferInvoiceReport } from "../../../models/sale-transfer-invoice-report.types";
 import saleTransferInvoiceReportRepository, {
   SaleTransferInvoiceReportRepository,

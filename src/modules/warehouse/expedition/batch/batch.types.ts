@@ -39,6 +39,8 @@ export interface ExpeditionBatchAttributes {
   finished_at?: Date | null;
   operator_id?: string;
   correction_letter_justification?: string | null;
+  // Lote de nota interna (m352).
+  is_internal?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -69,6 +71,8 @@ export interface ExpeditionBatchFull {
   mode?: string;
   operator_id?: string;
   correction_letter_justification?: string | null;
+  // Lote de nota interna (m352).
+  is_internal?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
   batchWithTotalVolumes?: EnrichedBatchInvoice[];

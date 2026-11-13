@@ -1,5 +1,5 @@
 import { FindAttributeOptions, OrderItem } from "sequelize";
-import { totalExpectedLiteral } from "../../../../warehouse/fiscal/invoices/invoice/helpers/totals";
+import { totalExpectedLiteral } from "../../../../warehouse/fiscal/invoices/invoice";
 
 export const ORDER_SNAPSHOT_INCLUDE_ALIAS = "orderSnapshot";
 /** Alias que o Sequelize dá à nota incluída dentro de orderSnapshot. */

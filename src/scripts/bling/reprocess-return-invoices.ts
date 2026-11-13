@@ -23,7 +23,7 @@ import {
 import { TCarInvoiceXmlPayload } from "../../modules/handlers/tecinco/service/tecinco/tecinco.types";
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
 import InvoiceUnitBusinessAttributes from "../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
-import { isStoredXmlReturnInvoice } from "../../modules/warehouse/fiscal/invoices/invoice/helpers/return-invoice";
+import { isStoredXmlReturnInvoice } from "../../modules/warehouse/fiscal/invoices/invoice";
 
 const DRY_RUN = process.env.DRY_RUN === "true";
 const PAGE_SIZE = 500;

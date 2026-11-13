@@ -38,9 +38,17 @@ jest.mock("../../../../../config/sequelize", () => ({
   default: { transaction: jest.fn((cb: any) => cb(mockTransaction)) },
 }));
 
-jest.mock("../../../fiscal/invoices/invoice/invoice.service", () => ({
+jest.mock("../../../fiscal/invoices/invoice", () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), findOne: jest.fn(), findTransfersToReceiverByNumbers: jest.fn() },
+  // Helpers puros da fachada seguem reais; só os services são mockados.
+  ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/bling-entrance-url"),
+  ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/transfer-reference"),
+  ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/totals"),
+  ...jest.requireActual("../../../fiscal/invoices/invoice/shared/helpers/invoice-operation"),
+  // Sem operação interna cadastrada: guarda de nota interna não interfere nos cenários daqui.
+  internalInvoiceScopeService: { getInternalOperationId: async () => null },
+  invoiceService: { findAll: jest.fn(), findOne: jest.fn() },
+  transferReferenceService: { findTransfersToReceiverByNumbers: jest.fn() },
 }));
 
 jest.mock(
@@ -116,7 +124,13 @@ jest.mock("../../../../handlers/bling/api/bling_api.service", () => ({
 import { assertAdtBatchTransferReferences } from "../helpers/transfer-reference";
 import auditLogService from "../../../../global/audit-logs/audit-log.service";
 import userService from "../../../../company/users/users/user.service";
-import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
+import {
+  invoiceService,
+  transferReferenceService,
+  internalInvoiceScopeService,
+  INTERNAL_BATCH_REFUSED_MESSAGE,
+  INTERNAL_INVOICE_REFUSED_MESSAGE,
+} from "../../../fiscal/invoices/invoice";
 import batchInvoicesService from "../../batch-invoices/batch-invoices.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
@@ -359,6 +373,121 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
       expect(
         unmappedInvoiceProductService.findUnmappedByInvoiceIds,
       ).toHaveBeenCalledWith(["invoice-1"], mockTransaction);
+    });
+
+    // Nota interna e NF-e nunca se misturam: add-invoice atual recusa interna; o do internal/ (flag) só aceita interna.
+    describe("nota interna (options.internal)", () => {
+      const internalInvoice = () => makeInvoice({ id: "invoice-1", invoice_operation_id: "op-internal" });
+
+      beforeEach(() => {
+        jest.spyOn(internalInvoiceScopeService, "getInternalOperationId").mockResolvedValue("op-internal" as any);
+        (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue([]);
+        (pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock).mockResolvedValue(undefined);
+        (assertTransshipment as jest.Mock).mockResolvedValue(false);
+        (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([]);
+        jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-1" } as any);
+      });
+
+      afterEach(() => jest.restoreAllMocks());
+
+      it("busca a nota pelo id (nota interna não tem chave de acesso)", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+        jest.spyOn(service as any, "createBatchStructure").mockRejectedValue(new Error("SENTINEL_CRIOU"));
+
+        await expect(
+          service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", undefined, undefined, undefined, undefined, {
+            internal: true,
+          }),
+        ).rejects.toThrow("SENTINEL_CRIOU");
+
+        expect(invoiceService.findAll).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: ["invoice-1"] } }),
+        );
+      });
+
+      it("lote novo pelo fluxo interno nasce is_internal", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+        const createSpy = jest
+          .spyOn(service as any, "createBatchStructure")
+          .mockRejectedValue(new Error("SENTINEL_CRIOU"));
+
+        await expect(
+          service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", undefined, undefined, undefined, undefined, {
+            internal: true,
+          }),
+        ).rejects.toThrow("SENTINEL_CRIOU");
+
+        expect(createSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ is_internal: true }),
+          expect.any(Array),
+          mockTransaction,
+          expect.any(Set),
+        );
+      });
+
+      it("fluxo interno com NF-e → recusa", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([makeInvoice({ invoice_operation_id: "op-sale" })]);
+
+        await expect(
+          service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", "batch-1", undefined, undefined, undefined, {
+            internal: true,
+          }),
+        ).rejects.toThrow("Só nota interna neste lote");
+      });
+
+      it("rota atual com nota interna → recusa", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+
+        await expect(service.addInvoiceToBatch(["key-1"], "ub-1", "OUTGOING", "batch-1")).rejects.toThrow(
+          INTERNAL_INVOICE_REFUSED_MESSAGE,
+        );
+      });
+
+      it("fluxo interno em lote de NF-e → recusa", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-1", status: "OPEN", is_internal: false } as any);
+
+        await expect(
+          service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", "batch-1", undefined, undefined, undefined, {
+            internal: true,
+          }),
+        ).rejects.toThrow("Lote não é de nota interna");
+      });
+
+      it("rota atual em lote interno → recusa", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([makeInvoice({ invoice_operation_id: "op-sale" })]);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-1", status: "OPEN", is_internal: true } as any);
+
+        await expect(service.addInvoiceToBatch(["key-1"], "ub-1", "OUTGOING", "batch-1")).rejects.toThrow(
+          INTERNAL_BATCH_REFUSED_MESSAGE,
+        );
+      });
+
+      it("fluxo interno em lote interno aberto → adiciona", async () => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([internalInvoice()]);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-1", type: "OUTGOING", status: "OPEN", mode: "REGULAR", is_internal: true } as any);
+        (batchInvoicesService.createBatchInvoiceWithItems as jest.Mock).mockResolvedValue({ volumesAdded: 3 });
+        jest.spyOn(service, "increment").mockResolvedValue(undefined);
+        (invoiceService as any).updateInvoices = jest.fn().mockResolvedValue(undefined);
+        jest.spyOn((service as any).repository, "getFullBatch").mockResolvedValue({ id: "batch-1" });
+
+        await service.addInvoiceToBatch(["invoice-1"], "ub-1", "OUTGOING", "batch-1", undefined, undefined, undefined, {
+          internal: true,
+        });
+
+        expect(batchInvoicesService.createBatchInvoiceWithItems).toHaveBeenCalledWith(
+          "batch-1",
+          expect.any(Array),
+          mockTransaction,
+          new Set(),
+        );
+      });
     });
   });
 });
@@ -1276,14 +1405,14 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
           sale("inv-1", "1001", "REF: 437", transporter),
           sale("inv-2", "1002", "REF: 0438", transporter),
         ]);
-        (invoiceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([
+        (transferReferenceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([
           { id: "tr-1", number_system: "000437", normalized_number: "437" },
           { id: "tr-2", number_system: "438", normalized_number: "438" },
         ]);
 
         await service.generateBatchFromQrCode("src-batch", "ub-1", undefined, "REGULAR", "job-1");
 
-        expect(invoiceService.findTransfersToReceiverByNumbers).toHaveBeenCalledWith(["437", "438"], STORE_CNPJ);
+        expect(transferReferenceService.findTransfersToReceiverByNumbers).toHaveBeenCalledWith(["437", "438"], STORE_CNPJ);
         expect(service.generateBatchFromInvoices).toHaveBeenCalledWith(
           ["tr-1", "tr-2"], "ub-1", "INCOMING", "REGULAR", "job-1",
         );
@@ -1301,7 +1430,7 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
 
     it("transferência não encontrada pra esta loja → erro com número e venda", async () => {
       (invoiceService.findAll as jest.Mock).mockResolvedValue([sale("inv-1", "1001", "REF: 437", null)]);
-      (invoiceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([]);
+      (transferReferenceService.findTransfersToReceiverByNumbers as jest.Mock).mockResolvedValue([]);
 
       await expect(service.generateBatchFromQrCode("src-batch", "ub-1")).rejects.toThrow(
         "437 (ref. a nota de venda 1001)",
@@ -1325,7 +1454,7 @@ describe("ExpeditionBatchService.generateBatchFromQrCode — lote a partir do QR
 
       await service.generateBatchFromQrCode("src-batch", "ub-1").catch(() => undefined);
 
-      expect(invoiceService.findTransfersToReceiverByNumbers).not.toHaveBeenCalled();
+      expect(transferReferenceService.findTransfersToReceiverByNumbers).not.toHaveBeenCalled();
     });
   });
 });

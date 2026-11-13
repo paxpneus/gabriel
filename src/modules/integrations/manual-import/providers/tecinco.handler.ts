@@ -9,7 +9,7 @@ import {
 import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
 import { parseAccessKey } from "../../../../shared/utils/xml/access-key";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
-import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../../warehouse/fiscal/invoices/invoice";
 import { ManualImportError } from "../manual-import.errors";
 import { manualImportJobOptions } from "../manual-import.constants";
 import {

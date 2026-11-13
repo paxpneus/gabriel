@@ -1,5 +1,5 @@
 import { INVOICED_STATUSES } from "../../../reports/sales-invoiced-report/repositories/query-objects/sales-invoiced-report.filters";
-import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
+import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice";
 
 // Data que decide se um item de snapshot cai na vigência da regra: vale a emissão da nota do pedido
 // (pedido dia 31, nota dia 01 → conta dia 01). Só tem data (= é elegível) pedido com nota não cancelada

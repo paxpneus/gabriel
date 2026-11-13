@@ -3,6 +3,9 @@ import Invoice from "../../../../../warehouse/fiscal/invoices/invoice/invoice.mo
 import InvoiceUnitBusinessAttributes from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import Order from "../../../../../sales/orders/order/orders.model";
 import UnitBusiness from "../../../../../company/unit-business/unit-business.model";
+import invoiceOperationRepository from "../../../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.repository";
+import { INVOICE_OPERATION_CODES } from "../../../../../warehouse/fiscal/invoices/invoice-operation/invoice-operation.types";
+import { notInternalInvoiceWhere } from "../../../../../warehouse/fiscal/invoices/invoice";
 import { QueryParser } from "../../../../../../shared/query/query.parser";
 import {
   QueryConfig,
@@ -31,11 +34,13 @@ export class SaleTransferInvoiceReportRepository {
     scope: SaleTransferInvoiceReportScope,
   ): Promise<SaleTransferInvoiceRow[]> {
     const { where, order } = QueryParser.parse(params, invoiceQueryConfig);
+    const internalOperationId = await invoiceOperationRepository.findIdByCode(INVOICE_OPERATION_CODES.INTERNAL_TRANSFER);
 
+    // Nota interna não é nota de venda (só aparece nos fluxos de internal/).
     return Invoice.findAll({
       subQuery: false,
       attributes: saleInvoiceRowAttributes(),
-      where: { [Op.and]: [where, saleTransferReportWhere(scope)] },
+      where: { [Op.and]: [where, saleTransferReportWhere(scope), notInternalInvoiceWhere(internalOperationId)] },
       include: [
         {
           model: InvoiceUnitBusinessAttributes,

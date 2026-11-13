@@ -9,7 +9,7 @@ import {
   orderFinalSituationSql,
   orderInvoicedSql,
 } from "../../../../../sales/orders/order/helpers/invoiced";
-import { invoiceCancelledSql } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
+import { invoiceCancelledSql } from "../../../../../warehouse/fiscal/invoices/invoice";
 import {
   SellerCommissionItemRow,
   SellerCommissionReportWarnings,

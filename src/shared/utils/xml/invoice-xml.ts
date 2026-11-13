@@ -25,7 +25,7 @@ import { getBlingIntegration } from "../../../modules/handlers/bling/api/bling_a
 import { logDbError } from "../logging/db-errors-logs";
 import { Op, QueryTypes } from "sequelize";
 import sequelize from "../../../config/sequelize";
-import invoiceService from "../../../modules/warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceCancellationService, invoiceCreationService, invoiceIngestionService, invoiceLifecycleService, invoiceService, isReturnInvoicePurpose, parseNfeOperationType } from "../../../modules/warehouse/fiscal/invoices/invoice";
 import invoiceItemsService from "../../../modules/warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import unitBusinessService from "../../../modules/company/unit-business/unit-business.service";
@@ -42,7 +42,6 @@ import { generateDanfePdfBuffer } from "./danfe-generator";
 import uploaderQueue from "../../../modules/handlers/uploader/uploader.queue";
 import tempFileService from "../../../modules/handlers/temp-file/temp-file.service";
 import pdvSalesRequestService from "../../../modules/sales/pdv-management/sales-request/pdv-sales-request.service";
-import { isReturnInvoicePurpose } from "../../../modules/warehouse/fiscal/invoices/invoice/helpers/return-invoice";
 
 /**
  * Extrai só o número (ide.nNF) e a chave de acesso de 44 dígitos de um XML
@@ -859,6 +858,16 @@ export async function upsertInvoiceFromXml(
     store_id = await Store.findOne({ where: { name: "Outros" } });
   }
 
+  // ─── Operação da nota ──────────────────────────────────────────────────────
+  // Direção só pra classificar (sem invoiceType, cai no tpNF); não muda a regra dos attributes.
+  const invoiceOperationId = await invoiceCreationService.resolveInvoiceOperationId({
+    senderCnpj,
+    receiverCnpj,
+    direction: invoiceType ?? parseNfeOperationType(ide.tpNF),
+    isReturn: isReturnInvoicePurpose(ide.finNFe),
+    isInternal: false,
+  });
+
   // ─── Dados base da invoice ─────────────────────────────────────────────────
 
   const invoiceBaseData = {
@@ -873,6 +882,7 @@ export async function upsertInvoiceFromXml(
     emitted_at: ide.dhEmi ? parseBlingDate(ide.dhEmi) : new Date(),
     number_system: numero,
     integrations_id: integration.id,
+    invoice_operation_id: invoiceOperationId,
     store_id: store_id?.id ?? "",
     transporter_id: transporter?.id ?? null,
     transporter_document: transporterDocument,
@@ -1011,7 +1021,7 @@ export async function upsertInvoiceFromXml(
       });
     }
 
-    const created = await invoiceService
+    const created = await invoiceCreationService
       .createWithRelations(
         {
           ...invoiceBaseData,
@@ -1059,7 +1069,7 @@ export async function upsertInvoiceFromXml(
       return;
     }
 
-    await invoiceService.updateInvoicesForAllUnitBusiness(
+    await invoiceLifecycleService.updateInvoicesForAllUnitBusiness(
       [existingInvoice.id],
       {
         ...invoiceBaseData,
@@ -1069,9 +1079,9 @@ export async function upsertInvoiceFromXml(
 
     // Backfill — só tem efeito quando a linha nunca passou por
     // createWithRelations (nota "provisória" vinculada rápido, ver
-    // invoiceService.createStub/ensureUnitBusinessAttributes); em qualquer
+    // invoiceIngestionService.createStub/ensureUnitBusinessAttributes); em qualquer
     // outra invoice (o caso normal, já criada com attributes) é um no-op.
-    await invoiceService.ensureUnitBusinessAttributes(existingInvoice.id, {
+    await invoiceCreationService.ensureUnitBusinessAttributes(existingInvoice.id, {
       senderCnpj: invoiceBaseData.sender_cnpj,
       receiverCnpj: invoiceBaseData.receiver_cnpj,
       initialStatus: resolveInitialStatus(),
@@ -1081,7 +1091,7 @@ export async function upsertInvoiceFromXml(
     // Reprocesso: cria os InvoiceItems que faltam pros itens que agora
     // resolvem a um Product (ex.: produto conciliado depois da primeira
     // passagem) — não duplica os que já existem.
-    await invoiceService.addMissingInvoiceItems(
+    await invoiceCreationService.addMissingInvoiceItems(
       existingInvoice.id,
       invoiceItemsForCreate,
     );
@@ -1100,7 +1110,7 @@ export async function upsertInvoiceFromXml(
   console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
 
   if (cancelledInvoice) {
-    await invoiceService.cancelInvoice(invoice.id);
+    await invoiceCancellationService.cancelInvoice(invoice.id);
     await pdvSalesRequestService.handleInvoiceCancelled(invoice.id);
   }
 
@@ -1113,7 +1123,7 @@ export async function upsertInvoiceFromXml(
     invoice.unitBusinessAttributes?.some((attr) => attr.type === "INCOMING")
   ) {
     // Crítico: falha derruba o job pra retry (bond e cancelamento no PDV são idempotentes).
-    const returnedInvoiceId = await invoiceService.bondReturnInvoice(
+    const returnedInvoiceId = await invoiceCancellationService.bondReturnInvoice(
       { id: invoice.id, number_system: numero },
       extracted.refNFeKey,
     );

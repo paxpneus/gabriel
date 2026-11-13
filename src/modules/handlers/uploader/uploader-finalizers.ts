@@ -2,7 +2,7 @@ import { TempFileEntityType } from "../../../shared/constants/temp-file-entity-t
 import { isTempFileSentinelPath } from "../temp-file/temp-file.constants";
 import pdvSalesRequestReceiptService from "../../sales/pdv-management/sales-request-receipt/pdv-sales-request-receipt.service";
 import unmappedInvoiceProductService from "../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
-import invoiceService from "../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../warehouse/fiscal/invoices/invoice";
 import { JobTracker } from "../../warehouse/fiscal/ctes/cte/helpers/cte-download.tracker";
 import socketService from "../socket/services/socket.service";
 

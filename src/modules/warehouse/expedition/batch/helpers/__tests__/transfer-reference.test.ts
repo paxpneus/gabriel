@@ -1,9 +1,9 @@
-jest.mock("../../../../fiscal/invoices/invoice/invoice.service", () => ({
+jest.mock("../../../../fiscal/invoices/invoice", () => ({
   __esModule: true,
-  default: { assertTransferReferences: jest.fn().mockResolvedValue(undefined) },
+  transferReferenceService: { assertTransferReferences: jest.fn().mockResolvedValue(undefined) },
 }));
 
-import invoiceService from "../../../../fiscal/invoices/invoice/invoice.service";
+import { transferReferenceService } from "../../../../fiscal/invoices/invoice";
 import { assertAdtBatchTransferReferences } from "../transfer-reference";
 
 const batch = (
@@ -41,7 +41,7 @@ describe("assertAdtBatchTransferReferences", () => {
       "gerar o romaneio",
     );
 
-    expect(invoiceService.assertTransferReferences).toHaveBeenCalledWith(
+    expect(transferReferenceService.assertTransferReferences).toHaveBeenCalledWith(
       [
         { invoiceId: "inv-100", invoiceNumber: "100", reference: "REF: 387" },
         { invoiceId: "inv-101", invoiceNumber: "101", reference: null },
@@ -60,7 +60,7 @@ describe("assertAdtBatchTransferReferences", () => {
       "finalizar o lote",
     );
 
-    expect(invoiceService.assertTransferReferences).toHaveBeenCalledWith(
+    expect(transferReferenceService.assertTransferReferences).toHaveBeenCalledWith(
       [{ invoiceId: "inv-101", invoiceNumber: "101", reference: "REF: 387" }],
       closing("finalizar o lote"),
       { checkAlreadyUsed: false },
@@ -72,11 +72,11 @@ describe("assertAdtBatchTransferReferences", () => {
       batch("LOGISTICA PAX PNEUS SP - CD 12", [["100", null, null, "/cartas-correcao/a.pdf"]]),
       "gerar o romaneio",
     );
-    expect(invoiceService.assertTransferReferences).not.toHaveBeenCalled();
+    expect(transferReferenceService.assertTransferReferences).not.toHaveBeenCalled();
   });
 
   it.each([["JADLOG"], ["LOGISTICA PAX PNEUS - CD 21"]])("%s → não valida", async (name) => {
     await assertAdtBatchTransferReferences(batch(name, [["100", name, null]]), "gerar o romaneio");
-    expect(invoiceService.assertTransferReferences).not.toHaveBeenCalled();
+    expect(transferReferenceService.assertTransferReferences).not.toHaveBeenCalled();
   });
 });

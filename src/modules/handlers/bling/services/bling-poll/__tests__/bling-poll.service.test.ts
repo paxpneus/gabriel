@@ -20,10 +20,10 @@ jest.mock("../../bling-sync/helpers/bling-list", () => ({
   paginateBling: jest.fn(),
   fetchBlingListPage: jest.fn(),
 }));
-jest.mock(
-  "../../../../../warehouse/fiscal/invoices/invoice/invoice.service",
-  () => ({ __esModule: true, default: { findAll: jest.fn() } }),
-);
+jest.mock("../../../../../warehouse/fiscal/invoices/invoice", () => ({
+  __esModule: true,
+  invoiceService: { findAll: jest.fn() },
+}));
 jest.mock("../../../../../sales/orders/order/orders.service", () => ({
   __esModule: true,
   default: { findAll: jest.fn() },
@@ -35,7 +35,7 @@ import {
   fetchBlingListPage,
   paginateBling,
 } from "../../bling-sync/helpers/bling-list";
-import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../../../../warehouse/fiscal/invoices/invoice";
 import ordersService from "../../../../../sales/orders/order/orders.service";
 import { Op } from "sequelize";
 import { BlingPollService } from "../bling-poll.service";

@@ -78,17 +78,16 @@ jest.mock("../../../orders/order/orders.service", () => ({
   },
 }));
 
-jest.mock("../../../../warehouse/fiscal/invoices/invoice/invoice.service", () => ({
+jest.mock("../../../../warehouse/fiscal/invoices/invoice", () => ({
   __esModule: true,
-  default: {
-    findById: jest.fn(),
-    findOne: jest.fn(),
-    findAll: jest.fn(),
-    findDeliveryNoteGeneratedInvoiceIds: jest.fn(),
-    createStub: jest.fn(),
-    update: jest.fn(),
-    assertTransferReferences: jest.fn(),
-  },
+  // Helpers puros da fachada seguem reais; só os services são mockados.
+  ...jest.requireActual("../../../../warehouse/fiscal/invoices/invoice/shared/helpers/reference-description"),
+  ...jest.requireActual("../../../../warehouse/fiscal/invoices/invoice/shared/helpers/custom-filters"),
+  ...jest.requireActual("../../../../warehouse/fiscal/invoices/invoice/shared/helpers/invoice-operation"),
+  internalInvoiceScopeService: { getInternalOperationId: jest.fn().mockResolvedValue("op-internal") },
+  invoiceService: { findById: jest.fn(), findOne: jest.fn(), findAll: jest.fn(), findDeliveryNoteGeneratedInvoiceIds: jest.fn(), update: jest.fn() },
+  invoiceIngestionService: { createStub: jest.fn() },
+  transferReferenceService: { assertTransferReferences: jest.fn() },
 }));
 
 jest.mock(
@@ -195,7 +194,7 @@ import pdvSalesRequestReceiptService from "../../sales-request-receipt/pdv-sales
 import pdvSalesRequestHistoryService from "../../sales-request-history/pdv-sales-request-history.service";
 import orderService from "../../../orders/order/orders.service";
 import paymentMethodService from "../../../orders/payment_method/payment_method.service";
-import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceIngestionService, invoiceService, transferReferenceService } from "../../../../warehouse/fiscal/invoices/invoice";
 import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import { WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM } from "../../../../company/unit-business/helpers/website-pax-unit-business";
@@ -2948,6 +2947,41 @@ describe("PdvSalesRequestService", () => {
   });
 
   describe("attachTransferInvoice", () => {
+    it("nota interna (série B) não vira nota de transferência da venda", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        sale_invoice_id: "invoice-sale",
+        transfer_invoice_id: null,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-internal",
+        integrations_id: "tecinco-1",
+        invoice_operation_id: "op-internal",
+        number_system: "882",
+        sender_cnpj: "02316749001220",
+        receiver_cnpj: "02316749002464",
+      });
+
+      await expect(
+        service.attachTransferInvoice("r1", { invoiceId: "invoice-internal", tcarUpsertQueue: {} as any }),
+      ).rejects.toThrow("Nota interna não serve como nota de transferência da venda.");
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("busca de nota de transferência não traz nota interna", async () => {
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([]);
+
+      await service.searchTransferInvoiceCandidates("882");
+
+      const where = (invoiceService.findAll as jest.Mock).mock.calls[0][0].where;
+      expect(where).toMatchObject({ integrations_id: "tecinco-1" });
+      expect(where.invoice_operation_id).toBeDefined();
+    });
+
     it("1 venda ↔ 1 transferência: valida a nota escolhida contra a nota de venda antes de vincular", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -2969,13 +3003,13 @@ describe("PdvSalesRequestService", () => {
               xml_path: null,
             },
       );
-      (invoiceService.assertTransferReferences as jest.Mock).mockRejectedValueOnce(new Error("já vinculada"));
+      (transferReferenceService.assertTransferReferences as jest.Mock).mockRejectedValueOnce(new Error("já vinculada"));
 
       await expect(
         service.attachTransferInvoice("r1", { invoiceId: "invoice-transfer", tcarUpsertQueue: {} as any }),
       ).rejects.toThrow("já vinculada");
 
-      expect(invoiceService.assertTransferReferences).toHaveBeenCalledWith(
+      expect(transferReferenceService.assertTransferReferences).toHaveBeenCalledWith(
         [{ invoiceId: "invoice-sale", invoiceNumber: "019794", reference: "28921" }],
         "Escolha outra nota de transferência.",
       );
@@ -3435,7 +3469,7 @@ describe("PdvSalesRequestService", () => {
           tcarUpsertQueue,
         }),
       ).rejects.toThrow(/CNPJ do emitente no DANFE/);
-      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(invoiceIngestionService.createStub).not.toHaveBeenCalled();
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
     });
 
@@ -3460,7 +3494,7 @@ describe("PdvSalesRequestService", () => {
       (tempFileService.create as jest.Mock).mockResolvedValue({
         id: "temp-1",
       });
-      (invoiceService.createStub as jest.Mock).mockResolvedValue({
+      (invoiceIngestionService.createStub as jest.Mock).mockResolvedValue({
         id: "invoice-provisoria",
       });
       (invoiceService.findById as jest.Mock).mockResolvedValue({
@@ -3486,7 +3520,7 @@ describe("PdvSalesRequestService", () => {
       // enfileira. upsertInvoiceFromTecinco é chamado pelo próprio worker,
       // não sincronamente por attachTransferInvoice.
       expect(tcarUpsertQueue.upsertInvoiceFromTecinco).not.toHaveBeenCalled();
-      expect(invoiceService.createStub).toHaveBeenCalledWith(
+      expect(invoiceIngestionService.createStub).toHaveBeenCalledWith(
         expect.objectContaining({
           integrationsId: "tecinco-1",
           numberSystem: "020309",
@@ -3548,7 +3582,7 @@ describe("PdvSalesRequestService", () => {
           tcarUpsertQueue,
         }),
       ).rejects.toThrow(/filial Tecinco a partir do CNPJ do emitente/);
-      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(invoiceIngestionService.createStub).not.toHaveBeenCalled();
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
     });
 
@@ -3577,7 +3611,7 @@ describe("PdvSalesRequestService", () => {
         service.attachTransferInvoice("r1", { danfeBuffer: Buffer.from(""), tcarUpsertQueue }),
       ).rejects.toThrow(error);
       expect(tempFileService.create).not.toHaveBeenCalled();
-      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(invoiceIngestionService.createStub).not.toHaveBeenCalled();
       expect(tcarUpsertQueue.add).not.toHaveBeenCalled();
     });
 

@@ -10,7 +10,7 @@ import {
   TCarNotaFiscalQueryParams,
 } from "../../../../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
 import { ProductConfig, SupplierMapping } from "../../../../inventory";
-import { TCarConferenciaEstoqueService } from "./conferencias-estoque.service";
+import { TCarConferenciaEstoqueService, TECINCO_INTERNAL_INVOICE_SERIES } from "./conferencias-estoque.service";
 import { cleanDocument } from "../../../../../shared/utils/normalizers/document";
 import {
   resolveProductByMappingOnly,
@@ -77,6 +77,8 @@ interface TCarConferenciaContexto {
   invoiceId: string;
   numero: string;
   chaveNfe: string | null;
+  // Série da nota: "B" = nota interna (sem chave de acesso, identificada pela chave composta da filial).
+  invoiceSeries: string | null;
   senderCnpj: string;
   receiverCnpj: string;
   invoiceType: "INCOMING" | "OUTGOING" | null;
@@ -196,6 +198,7 @@ export class TCarConferenciaPostService {
             "sender_cnpj",
             "receiver_cnpj",
             "xml_key",
+            "invoice_series",
           ],
           required: true,
         },
@@ -240,6 +243,7 @@ export class TCarConferenciaPostService {
       invoiceId,
       numero,
       chaveNfe: invoice.xml_key ?? null,
+      invoiceSeries: invoice.invoice_series ?? null,
       senderCnpj: invoice.sender_cnpj,
       receiverCnpj: invoice.receiver_cnpj,
       invoiceType: (attrs?.type as "INCOMING" | "OUTGOING" | undefined) ?? null,
@@ -307,7 +311,7 @@ export class TCarConferenciaPostService {
     try {
       extraParams =
         tipo === "nota-fiscal"
-          ? await this.resolveExtraParams(branchId, ctx.numero, ctx.chaveNfe)
+          ? await this.resolveExtraParams(branchId, ctx)
           : {};
 
       documento = await this.conferenciaService.carregarDocumento(
@@ -564,6 +568,7 @@ export class TCarConferenciaPostService {
             "sender_cnpj",
             "receiver_cnpj",
             "xml_key",
+            "invoice_series",
           ],
           required: true,
         },
@@ -617,6 +622,7 @@ export class TCarConferenciaPostService {
         invoiceId: invoice.id,
         numero: invoice.number_system,
         chaveNfe: invoice.xml_key ?? null,
+        invoiceSeries: invoice.invoice_series ?? null,
         senderCnpj: invoice.sender_cnpj,
         receiverCnpj: invoice.receiver_cnpj,
         invoiceType:
@@ -677,9 +683,13 @@ export class TCarConferenciaPostService {
 
   private async resolveExtraParams(
     branchId: number,
-    numero: string,
-    chaveNfe: string | null,
+    ctx: Pick<TCarConferenciaContexto, "numero" | "chaveNfe" | "invoiceSeries" | "invoiceType">,
   ): Promise<TCarNotaFiscalQueryParams> {
+    const { numero, chaveNfe } = ctx;
+    // Nota interna não tem chave de acesso: identifica pela chave composta desta filial.
+    if (!chaveNfe && ctx.invoiceSeries === TECINCO_INTERNAL_INVOICE_SERIES) {
+      return this.resolveInternalExtraParams(branchId, numero, ctx.invoiceType);
+    }
     if (!chaveNfe) {
       throw new Error(
         `[TCarConferenciaPostService] Invoice sem xml_key — impossível identificar a NF na Tecinco de forma inequívoca | numero=${numero}`,
@@ -700,6 +710,54 @@ export class TCarConferenciaPostService {
       );
     }
 
+    return {
+      CLN_CODIGO: chave.cln_codigo,
+      TPNEG_CODIGO: chave.tpneg_codigo,
+      NTZ_CODIGO: chave.ntz_codigo,
+      OPR_CODIGO: chave.opr_codigo,
+      EPENF_SERIE: chave.serie,
+    };
+  }
+
+  // Chave composta da nota interna nesta filial (cln/ntz mudam por filial; o source_payload só guarda o lado que foi importado).
+  // Busca na listagem da série B pelo número e lado (S na saída, E na entrada), situações A e N; ambíguo ou ausente → erro.
+  private async resolveInternalExtraParams(
+    branchId: number,
+    numero: string,
+    invoiceType: "INCOMING" | "OUTGOING" | null,
+  ): Promise<TCarNotaFiscalQueryParams> {
+    if (!invoiceType) {
+      throw new Error(
+        `[TCarConferenciaPostService] Nota interna sem tipo na loja — impossível escolher entrada/saída na Tecinco | numero=${numero}`,
+      );
+    }
+    const entradaSaida = invoiceType === "OUTGOING" ? "S" : "E";
+    const respostas = await Promise.all(
+      (["A", "N"] as const).map((situacao) =>
+        this.conferenciaService.listarNotasFiscais(branchId, {
+          nota: numero,
+          serie: TECINCO_INTERNAL_INVOICE_SERIES,
+          entrada_saida: entradaSaida,
+          situacao,
+          limit: 10,
+          offset: 0,
+        }),
+      ),
+    );
+    const chaves = respostas
+      .flatMap((resposta) => (Array.isArray(resposta?.data) ? resposta.data : []))
+      .filter(
+        (nota: any) =>
+          !nota.chave_nfe && nota.entrada_saida === entradaSaida && String(nota.chave?.nota) === String(numero),
+      )
+      .map((nota: any) => nota.chave);
+
+    if (chaves.length !== 1) {
+      throw new Error(
+        `[TCarConferenciaPostService] Nota interna ${chaves.length ? "ambígua" : "não encontrada"} na Tecinco | numero=${numero} | entrada_saida=${entradaSaida} | branchId=${branchId}`,
+      );
+    }
+    const [chave] = chaves;
     return {
       CLN_CODIGO: chave.cln_codigo,
       TPNEG_CODIGO: chave.tpneg_codigo,

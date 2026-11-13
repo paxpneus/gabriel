@@ -46,7 +46,7 @@ Exceção (ver "Organização de módulos"): entidade principal → sub-entidade
 
 ## Organização de módulos
 
-**Escopo: vale pra código novo e pra entidade que eu pedir pra refatorar.** Módulo/entidade que já existe fica como está — mexer nele por outra tarefa não é motivo pra reorganizar as pastas. Referência de nível 2 já aplicada: `sales/contacts/`.
+**Escopo: vale pra código novo e pra entidade que eu pedir pra refatorar.** Módulo/entidade que já existe fica como está — mexer nele por outra tarefa não é motivo pra reorganizar as pastas. Referência de nível 2 já aplicada: `sales/contacts/`, `warehouse/fiscal/invoices/invoice/`.
 
 ### Conceitos
 - Entidade: uma tabela (order, order_items, invoice...).
@@ -150,7 +150,7 @@ Exceção (ver "Organização de módulos"): entidade principal → sub-entidade
 
 ## Helpers de query/filtro reutilizáveis
 
-Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e reutilizável por mais de um filtro/método: função nomeada, exportada, parametrizada em `helpers/` da própria entidade (ex: `invoice/helpers/`) — nunca função solta/closure dentro do service/repository. Parametrizar pelo que varia entre chamadas (nome de loja, unit business id, alias de tabela, data de referência), não hardcoded pro primeiro caso de uso. Referência: `invoice/helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`), `invoice/helpers/custom-filters.ts` (`storeCollectionDateTodayWhere`) — funções puras, importadas por `invoice.service.ts`/`invoice.repository.ts`. É organização de código, não muda layering acima: o helper pertence à mesma entidade e é usado pela camada que precisar.
+Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e reutilizável por mais de um filtro/método: função nomeada, exportada, parametrizada em `helpers/` da própria entidade (ex: `invoice/shared/helpers/`) — nunca função solta/closure dentro do service/repository. Parametrizar pelo que varia entre chamadas (nome de loja, unit business id, alias de tabela, data de referência), não hardcoded pro primeiro caso de uso. Referência: `invoice/shared/helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`), `invoice/shared/helpers/custom-filters.ts` (`storeCollectionDateTodayWhere`) — funções puras, importadas pelos services/repositories dos domínios de `invoice/`. É organização de código, não muda layering acima: o helper pertence à mesma entidade e é usado pela camada que precisar.
 
 ## SQL cru (`literal`/`query`) — injection
 
@@ -233,8 +233,9 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `unmapped-invoice-product/` — fila de revisão manual
   - `index.md` — regras `type`/dedup, schema
   - `create-flow.md` — fluxo create-product-from-unmapped
-- `invoice/` — Invoice/InvoiceItems/InvoiceFiscalItem, import XML NF-e
-  - `index.md` — visão geral, FK-on-delete, filtros/fixes menores, auth, `tracking_url` (link de rastreio, só Bling), carta de correção (libera nota CD 12/17 sem transferência no lote)
+- `invoice/` — Invoice/InvoiceItems/InvoiceFiscalItem, import XML NF-e; invoice no nível 2 (shared, core, ingestion, lifecycle, cancellation, documents, labels, reports, internal)
+  - `index.md` — visão geral, FK-on-delete, filtros/fixes menores, auth, `tracking_url` (link de rastreio, só Bling), carta de correção (libera nota CD 12/17 sem transferência no lote), operação da nota (`invoice_operations`: classificação na ingestão, filtro, backfill)
+  - `internal.md` — nota interna (série B Tecinco, sem chave/XML): `upsertInternalInvoice`, id_system canônico emitente+número, dedup do sync por número, `GET /internal/list`, lote interno (`expedition_batches.is_internal`, scan por EAN), nota interna fora de todo fluxo atual (exclusões + guardas)
   - `item-resolution.md` — ordem de resolução de produto, cascata de mapeamento manual, fixes de duplicate-key
   - `ml-shipping-filters.md` — filtros da fila de shipping Mercado Livre
   - `supplier-discount/filter.md` — filtros `rim`/`supplier_discount`

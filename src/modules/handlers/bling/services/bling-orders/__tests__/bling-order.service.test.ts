@@ -105,23 +105,18 @@ jest.mock("../../../api/bling_api.service", () => ({
   getBlingIntegration: jest.fn(),
 }));
 
-jest.mock(
-  "../../../../../warehouse/fiscal/invoices/invoice/invoice.service",
-  () => ({
-    __esModule: true,
-    default: {
-      findOne: jest.fn(),
-      createStub: jest.fn(),
-    },
-  }),
-);
+jest.mock("../../../../../warehouse/fiscal/invoices/invoice", () => ({
+  __esModule: true,
+  invoiceService: { findOne: jest.fn() },
+  invoiceIngestionService: { createStub: jest.fn() },
+}));
 
 import pdvSalesRequestService from "../../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import ordersService from "../../../../../sales/orders/order/orders.service";
 import orderItemsService from "../../../../../sales/orders/order_items/order_items.service";
 import { getBlingIntegration } from "../../../api/bling_api.service";
 import UnitBusiness from "../../../../../company/unit-business/unit-business.model";
-import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceIngestionService, invoiceService } from "../../../../../warehouse/fiscal/invoices/invoice";
 import BlingOrderService from "../bling-order.service";
 import { startOfDayTz } from "../../../../../../shared/utils/normalizers/date";
 
@@ -891,7 +886,7 @@ describe("BlingOrderService", () => {
       expect(lastUpdateFields()).toEqual(
         expect.objectContaining({ invoice_id: "invoice-local" }),
       );
-      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(invoiceIngestionService.createStub).not.toHaveBeenCalled();
       const blingApi = (service as any).blingApi;
       expect(blingApi.get).not.toHaveBeenCalledWith(
         expect.stringContaining("/nfe/"),
@@ -900,7 +895,7 @@ describe("BlingOrderService", () => {
 
     it("nota ainda não existe localmente — busca só o essencial na Bling e vincula uma nota provisória (number_system + linkPDF)", async () => {
       (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
-      (invoiceService.createStub as jest.Mock).mockResolvedValue({
+      (invoiceIngestionService.createStub as jest.Mock).mockResolvedValue({
         id: "invoice-provisoria",
       });
       service = new BlingOrderService(
@@ -927,7 +922,7 @@ describe("BlingOrderService", () => {
         }),
         `bling-invoice-fetch-${orderData.notaFiscal.id}`,
       );
-      expect(invoiceService.createStub).toHaveBeenCalledWith(
+      expect(invoiceIngestionService.createStub).toHaveBeenCalledWith(
         expect.objectContaining({
           integrationsId: INTEGRATION_ID,
           numberSystem: "16603",
@@ -997,7 +992,7 @@ describe("BlingOrderService", () => {
 
       await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
 
-      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(invoiceIngestionService.createStub).not.toHaveBeenCalled();
       expect(lastUpdateFields()).toEqual(
         expect.objectContaining({ invoice_id: null }),
       );
@@ -1011,7 +1006,7 @@ describe("BlingOrderService", () => {
 
       await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
 
-      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(invoiceIngestionService.createStub).not.toHaveBeenCalled();
       expect(lastUpdateFields()).toEqual(
         expect.objectContaining({ invoice_id: null }),
       );

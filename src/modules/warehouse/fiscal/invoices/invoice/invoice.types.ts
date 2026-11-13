@@ -37,6 +37,7 @@ export interface InvoiceAttributes {
   seller_id?: string | null;
   supplier_id?: string | null;
   origin_unit_business_id?: string | null;
+  invoice_operation_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[]
@@ -82,6 +83,9 @@ export interface InvoiceAttributes {
 
 export interface FullInvoiceAttributes {
   id: string;
+  // Listagens de transferência/interna e detalhe (GET /full/:id): nome da loja de cada ponta (null se o CNPJ não for de loja).
+  sender_unit_business_name?: string | null;
+  receiver_unit_business_name?: string | null;
   customer_name: string;
   customer_document: string;
   xml_path?: string | null;
@@ -100,6 +104,7 @@ export interface FullInvoiceAttributes {
   seller_id?: string | null;
   supplier_id?: string | null;
   origin_unit_business_id?: string | null;
+  invoice_operation_id?: string | null;
   originUnitBusiness?: Pick<UnitBusinessAttributes, "id" | "name" | "number" | "cnpj"> | null;
   createdAt?: Date;
   updatedAt?: Date;
@@ -164,6 +169,7 @@ export interface FullInvoiceAttributesForAllUnits {
   transporter_id?: string | null;
   seller_id?: string | null;
   supplier_id?: string | null;
+  invoice_operation_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[];
@@ -239,14 +245,6 @@ export type InvoiceWithTransporter = Invoice & {
   transporter: Transporter;
 };
 
-// Uma linha de countPendingBatchByTransporter (notas PENDING/OPEN sem
-// romaneio gerado, agrupadas por transportadora).
-export interface PendingBatchByTransporterRow {
-  transporter_id: string | null;
-  transporter_name: string | null;
-  quantity: number;
-}
-
 export type SefazManifestationStatus =
   | "PENDING_CIENCIA"
   | "CIENCIA_ENVIADA"
@@ -256,13 +254,3 @@ export type SefazManifestationStatus =
   | "OPERACAO_NAO_REALIZADA"
   | "AGUARDANDO_PROCNFE"
   | "PROCNFE_DESISTIDO";
-
-
-// Nota alvo de cancelamento direto (cancelInvoice/bondReturnInvoice): status por unit business + vínculos em lote aberto.
-export interface InvoiceCancellationTarget {
-  id: string;
-  number_system: string;
-  return_invoice_reference: string | null;
-  statuses: InvoiceStatus[];
-  openBatchInvoiceIds: string[];
-}

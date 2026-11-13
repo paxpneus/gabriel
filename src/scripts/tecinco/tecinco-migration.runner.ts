@@ -12,13 +12,19 @@ import { Queue } from "bullmq";
 import { Op } from "sequelize";
 import { TCarProdutoService } from "../../modules/handlers/tecinco/service/produtos/produtos.service";
 import TCarClienteService from "../../modules/handlers/tecinco/service/clientes/clientes.service";
-import { TCarConferenciaEstoqueService } from "../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
+import {
+  TCarConferenciaEstoqueService,
+  TCarNotaFiscalListParams,
+  TECINCO_INTERNAL_INVOICE_SERIES,
+} from "../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
 import {
   TCarUpsertQueue,
   TCarUpsertJobPayload,
 } from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
 import {
   TCarInvoiceQueue,
+  TCAR_INVOICE_INTERNAL_NEW_JOB_NAME,
+  TCAR_INVOICE_INTERNAL_UPDATE_JOB_NAME,
   TCAR_INVOICE_NEW_JOB_NAME,
   TCAR_INVOICE_NEW_PRIORITY,
   TCAR_INVOICE_UPDATE_JOB_NAME,
@@ -26,7 +32,12 @@ import {
   TCAR_INVOICE_XML_UNAVAILABLE_FAILURE,
 } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
-import invoiceService from "../../modules/warehouse/fiscal/invoices/invoice/invoice.service";
+import {
+  internalInvoiceService,
+  invoiceCancellationService,
+} from "../../modules/warehouse/fiscal/invoices/invoice";
+import { getCachedUnitBusinessByNumber } from "../../modules/handlers/tecinco/queues/helpers/lookup-cache";
+import { cleanDocument } from "../../shared/utils/normalizers/document";
 import { tecincoUnitBusinessForPopulate } from "../../shared/constants/tecinco-units";
 import { getTCarIntegration } from "../../modules/handlers/tecinco/api/tecinco_api";
 import integrationMappingService from "../../modules/integrations/integration-mapping/integration-mapping.service";
@@ -95,6 +106,36 @@ async function listarNotasRecentes(
   );
 }
 
+// Notas internas recentes (série B, sem modelo 55 nem chave_nfe) de uma situação; sem entrada_saida traz os dois tipos.
+async function listarNotasInternasRecentes(
+  service: TCarConferenciaEstoqueService,
+  branchId: number,
+  situacao: "A" | "N" | "C",
+  entrada_saida?: "E" | "S",
+): Promise<any[]> {
+  const params: TCarNotaFiscalListParams = {
+    serie: TECINCO_INTERNAL_INVOICE_SERIES,
+    situacao,
+    limit: INVOICE_LOOKBACK,
+    offset: 0,
+  };
+  if (entrada_saida) params.entrada_saida = entrada_saida;
+  const response = await service.listarNotasFiscais(branchId, params);
+  const notas: any[] = Array.isArray(response?.data) ? response.data : [];
+  return notas.filter(
+    (nota) =>
+      (!entrada_saida || nota.entrada_saida === entrada_saida) &&
+      !nota.chave_nfe &&
+      nota.chave?.nota,
+  );
+}
+
+// CNPJ (limpo) da unit business da filial Tecinco — lado da dedup da nota interna; null se a filial não está cadastrada.
+async function resolveBranchCnpj(branchId: number): Promise<string | null> {
+  const unitBusiness = await getCachedUnitBusinessByNumber(String(branchId).padStart(2, "0"));
+  return unitBusiness?.cnpj ? cleanDocument(unitBusiness.cnpj) : null;
+}
+
 // Payload do job invoice_xml (criação ou cancelamento) a partir de um item da listagem /notas-fiscais.
 function buildInvoiceXmlPayload(
   nota: any,
@@ -119,6 +160,39 @@ function buildInvoiceXmlPayload(
       seq_cancelamento: chave.seq_cancelamento ?? "0",
     },
   };
+}
+
+// Payload do job invoice_internal: mesma chave composta do invoice_xml, só muda o resource.
+function buildInternalInvoicePayload(
+  nota: any,
+  branchId: number,
+  companyId: string,
+): TCarUpsertJobPayload {
+  return {
+    ...buildInvoiceXmlPayload(nota, branchId, companyId),
+    eventId: `invoice-internal-${branchId}-${nota.entrada_saida}-${nota.chave.nota}-${uuidv4()}`,
+    resource: "invoice_internal",
+  };
+}
+
+// Chave da dedup da nota interna (sem chave_nfe): lado da filial na listagem + número.
+function internalNoteKey(entradaSaida: string, numero: string): string {
+  return `${entradaSaida}-${numero}`;
+}
+
+// Números da nota interna já gravados por lado (E/S) — a mesma transferência gravada pela outra filial também conta.
+async function findExistingInternalKeys(branchCnpj: string, notas: any[]): Promise<Set<string>> {
+  const lados = ["E", "S"] as const;
+  const existentes = await Promise.all(
+    lados.map((lado) =>
+      internalInvoiceService.findExistingInternalNumbers(
+        lado,
+        branchCnpj,
+        notas.filter((nota) => nota.entrada_saida === lado).map((nota) => String(nota.chave.nota)),
+      ),
+    ),
+  );
+  return new Set(lados.flatMap((lado, i) => existentes[i].map((numero) => internalNoteKey(lado, numero))));
 }
 
 function sleep(ms: number) {
@@ -388,7 +462,7 @@ export async function migrateNotasCanceladas(
         (invoices) =>
           new Set(invoices.map((invoice) => invoice.xml_key).filter((key): key is string => !!key)),
       ),
-      invoiceService
+      invoiceCancellationService
         .findXmlKeysNotCancelledInUnitBusinesses(chaves, tecincoUnitBusinessForPopulate)
         .then((keys) => new Set(keys)),
     ]);
@@ -424,11 +498,128 @@ export async function migrateNotasCanceladas(
     console.log(
       `[TCAR_INVOICE] Filial ${branchId}: ${notas.length} cancelada(s) listada(s) — ${criadas} enfileirada(s) pra criar, ${canceladas} pra cancelar`,
     );
+
+    await enqueueNotasInternasCanceladas({
+      service,
+      branchId,
+      companyId,
+      targetInvoiceQueue,
+      dryRun,
+      jobIdsPendentesOuRecentes,
+    });
   }
 
   if (waitForDrain) {
     await waitForQueueToDrain(targetInvoiceQueue, "Notas Fiscais canceladas", dryRun);
   }
+}
+
+// Notas internas (série B) canceladas da filial: a que não existe nasce CANCELLED (invoice-internal-new), a gravada ainda não cancelada vira invoice-internal-update.
+async function enqueueNotasInternasCanceladas(params: {
+  service: TCarConferenciaEstoqueService;
+  branchId: number;
+  companyId: string;
+  targetInvoiceQueue: TCarInvoiceQueue;
+  dryRun: boolean;
+  jobIdsPendentesOuRecentes: Set<string>;
+}): Promise<void> {
+  const { service, branchId, companyId, targetInvoiceQueue, dryRun, jobIdsPendentesOuRecentes } = params;
+  const branchCnpj = await resolveBranchCnpj(branchId);
+  if (!branchCnpj) {
+    console.warn(`[TCAR_INVOICE] Filial ${branchId} sem unit business/CNPJ — notas internas canceladas não sincronizadas`);
+    return;
+  }
+
+  const notas = await listarNotasInternasRecentes(service, branchId, "C");
+  const lados = ["E", "S"] as const;
+  const [existentes, naoCanceladas] = await Promise.all([
+    findExistingInternalKeys(branchCnpj, notas),
+    Promise.all(
+      lados.map((lado) =>
+        internalInvoiceService.findInternalNumbersNotCancelledInUnitBusinesses(
+          lado,
+          branchCnpj,
+          notas.filter((nota) => nota.entrada_saida === lado).map((nota) => String(nota.chave.nota)),
+          tecincoUnitBusinessForPopulate,
+        ),
+      ),
+    ).then((porLado) => new Set(lados.flatMap((lado, i) => porLado[i].map((numero) => internalNoteKey(lado, numero))))),
+  ]);
+
+  let criadas = 0;
+  let canceladas = 0;
+  for (const nota of notas) {
+    const numero = String(nota.chave.nota);
+    const key = internalNoteKey(nota.entrada_saida, numero);
+    const isNova = !existentes.has(key);
+    if (!isNova && !naoCanceladas.has(key)) continue;
+
+    // Nova usa o mesmo jobId de enqueueNovasNotasInternas (dedup entre os dois).
+    const jobId = isNova
+      ? `invoice-internal-new-${branchId}-${nota.entrada_saida}-${numero}`
+      : `invoice-internal-update-${branchId}-${nota.entrada_saida}-${numero}`;
+    if (jobIdsPendentesOuRecentes.has(jobId)) continue;
+
+    await enqueue(targetInvoiceQueue, buildInternalInvoicePayload(nota, branchId, companyId), jobId, dryRun, {
+      priority: isNova ? TCAR_INVOICE_NEW_PRIORITY : TCAR_INVOICE_UPDATE_PRIORITY,
+      name: isNova ? TCAR_INVOICE_INTERNAL_NEW_JOB_NAME : TCAR_INVOICE_INTERNAL_UPDATE_JOB_NAME,
+      removeOnComplete: { age: INVOICE_JOB_RETENTION_SECONDS },
+    });
+    if (isNova) criadas++;
+    else canceladas++;
+  }
+  console.log(
+    `[TCAR_INVOICE] Filial ${branchId}: ${notas.length} nota(s) interna(s) cancelada(s) listada(s) — ${criadas} enfileirada(s) pra criar, ${canceladas} pra cancelar`,
+  );
+}
+
+// Notas internas (série B) novas da filial: dedup sem chave (número + filial no lado da listagem) e por jobId pendente/recente.
+async function enqueueNovasNotasInternas(params: {
+  service: TCarConferenciaEstoqueService;
+  branchId: number;
+  companyId: string;
+  targetInvoiceQueue: TCarInvoiceQueue;
+  dryRun: boolean;
+  jobIdsPendentesOuRecentes: Set<string>;
+}): Promise<number> {
+  const { service, branchId, companyId, targetInvoiceQueue, dryRun, jobIdsPendentesOuRecentes } = params;
+  const branchCnpj = await resolveBranchCnpj(branchId);
+  if (!branchCnpj) {
+    console.warn(`[TCAR_INVOICE] Filial ${branchId} sem unit business/CNPJ — notas internas não sincronizadas`);
+    return 0;
+  }
+
+  // Canceladas ficam com enqueueNotasInternasCanceladas, igual à NF-e.
+  const combos = (["E", "S"] as const).flatMap((entrada_saida) =>
+    (["A", "N"] as const).map((situacao) => ({ entrada_saida, situacao })),
+  );
+  const notas = (
+    await Promise.all(
+      combos.map(({ entrada_saida, situacao }) =>
+        listarNotasInternasRecentes(service, branchId, situacao, entrada_saida),
+      ),
+    )
+  ).flat();
+  const existentes = await findExistingInternalKeys(branchCnpj, notas);
+
+  const enfileiradas: string[] = [];
+  for (const nota of notas) {
+    const numero = String(nota.chave.nota);
+    const key = internalNoteKey(nota.entrada_saida, numero);
+    const jobId = `invoice-internal-new-${branchId}-${key}`;
+    if (existentes.has(key) || jobIdsPendentesOuRecentes.has(jobId)) continue;
+
+    await enqueue(targetInvoiceQueue, buildInternalInvoicePayload(nota, branchId, companyId), jobId, dryRun, {
+      priority: TCAR_INVOICE_NEW_PRIORITY,
+      name: TCAR_INVOICE_INTERNAL_NEW_JOB_NAME,
+      removeOnComplete: { age: INVOICE_JOB_RETENTION_SECONDS },
+    });
+    enfileiradas.push(key);
+  }
+  if (enfileiradas.length) {
+    console.log(`  → Filial ${branchId} notas internas enfileiradas: ${enfileiradas.join(", ")}`);
+  }
+  return enfileiradas.length;
 }
 
 // ─── Entry point público ──────────────────────────────────────────────────────
@@ -537,6 +728,14 @@ export async function migrateNovasNotasFiscais(
         console.log(`  → Filial ${branchId} [${entrada_saida}/${situacao}] notas sem invoice — ${detalhe}`);
       }
     }
+    enfileiradas += await enqueueNovasNotasInternas({
+      service,
+      branchId,
+      companyId,
+      targetInvoiceQueue,
+      dryRun: dryRun ?? false,
+      jobIdsPendentesOuRecentes,
+    });
     console.log(`[TCAR_INVOICE] Filial ${branchId}: ${enfileiradas} nota(s) nova(s) enfileirada(s)`);
   }
 }

@@ -37,7 +37,7 @@ import Store from "../../../stores/stores.model";
 import { OrderService } from "../orders.service";
 import orderRepository from "../orders.repository";
 import { Invoice } from "../../../../warehouse";
-import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceService } from "../../../../warehouse/fiscal/invoices/invoice";
 import integrationService from "../../../../integrations/integrations/integrations.service";
 import { getBlingIntegration } from "../../../../handlers/bling/api/bling_api.service";
 

@@ -15,6 +15,7 @@ import {
 } from "./stock-movements.types";
 import InvoiceFiscalItem from "../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
+import { internalInvoiceScopeService, notInternalInvoiceWhere } from "../../../warehouse/fiscal/invoices/invoice";
 import {
   PaginatedResult,
   QueryParams,
@@ -1818,7 +1819,11 @@ export class StockMovementService extends BaseService<
       ...new Set(invoiceItems.map((item) => item.invoice_id)),
     ];
 
-    const invoiceWhere: any = { id: { [Op.in]: invoiceIds } };
+    // Nota interna não gera movimento no Kardex (só aparece nos fluxos de internal/).
+    const invoiceWhere: any = {
+      id: { [Op.in]: invoiceIds },
+      ...notInternalInvoiceWhere(await internalInvoiceScopeService.getInternalOperationId()),
+    };
     if (emittedAfter) {
       invoiceWhere.emitted_at = { [Op.gt]: emittedAfter };
     }
@@ -2193,10 +2198,13 @@ export class StockMovementService extends BaseService<
 
     // Não percorre itens de NFs que já pertencem ao CSV consolidado. A
     // filtragem é repetida no backfill por produto como defesa adicional.
+    // Nota interna não gera movimento no Kardex.
+    const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
     const invoices = await Invoice.findAll({
       where: {
         id: { [Op.in]: invoiceIds },
         ...(cutoff ? { emitted_at: { [Op.gt]: cutoff } } : {}),
+        ...notInternalInvoiceWhere(internalOperationId),
       },
       attributes: ["id"],
       transaction,
@@ -2382,8 +2390,10 @@ export class StockMovementService extends BaseService<
     const invoiceIds = invoiceAttrs.map((a) => a.invoice_id);
     if (!invoiceIds.length) return [];
 
+    // Nota interna não gera movimento no Kardex.
+    const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
     const invoices = await Invoice.findAll({
-      where: { id: { [Op.in]: invoiceIds } },
+      where: { id: { [Op.in]: invoiceIds }, ...notInternalInvoiceWhere(internalOperationId) },
       attributes: ["id"],
       transaction,
     });

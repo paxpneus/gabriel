@@ -42,7 +42,7 @@ import orderService from "../../orders/order/orders.service";
 import paymentMethodService from "../../orders/payment_method/payment_method.service";
 import expeditionBatchService from "../../../warehouse/expedition/batch/batch.service";
 import { buildExpeditionProgress } from "./helpers/expedition-progress";
-import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceCancellationService, invoiceDocumentsService, invoiceIngestionService, invoiceService, transferReferenceService, buildInvoiceReferenceDescription, normalizeInvoiceNumber, internalInvoiceScopeService, notInternalInvoiceWhere } from "../../../warehouse/fiscal/invoices/invoice";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import roleService from "../../../company/users/roles/role.service";
@@ -120,10 +120,6 @@ import {
   extractTransporterCd,
 } from "./helpers/transporter-cd";
 import { invoiceProductsMatch } from "./helpers/invoice-product-quantity-match";
-import {
-  buildInvoiceReferenceDescription,
-  normalizeInvoiceNumber,
-} from "../../../warehouse/fiscal/invoices/invoice/helpers/reference-description";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 import { isWithinPhysicalStoreRange } from "../../../company/unit-business/helpers/physical-numbered-unit-business";
 import { WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM } from "../../../company/unit-business/helpers/website-pax-unit-business";
@@ -2270,8 +2266,12 @@ export class PdvSalesRequestService extends BaseService<
   async searchTransferInvoiceCandidates(query: string) {
     if (!query || query.trim().length < 2) return [];
 
-    const tecinco = await getTCarIntegration();
+    const [tecinco, internalOperationId] = await Promise.all([
+      getTCarIntegration(),
+      internalInvoiceScopeService.getInternalOperationId(),
+    ]);
 
+    // Nota interna não serve como nota de transferência da venda.
     return invoiceService.findAll({
       where: {
         integrations_id: tecinco.id,
@@ -2279,6 +2279,7 @@ export class PdvSalesRequestService extends BaseService<
           { number_system: { [Op.iLike]: `%${query}%` } },
           { id_system: { [Op.iLike]: `%${query}%` } },
         ],
+        ...notInternalInvoiceWhere(internalOperationId),
       },
       attributes: [
         "id",
@@ -2308,7 +2309,7 @@ export class PdvSalesRequestService extends BaseService<
       throw new Error("Nota não pertence a esta solicitação");
     }
 
-    return invoiceService.getDanfeBuffer(invoiceId);
+    return invoiceDocumentsService.getDanfeBuffer(invoiceId);
   }
 
   // Vincula/troca a nota de transferência; em PENDING_NF_TRANSFER já confirma
@@ -2422,7 +2423,7 @@ export class PdvSalesRequestService extends BaseService<
         // Tecinco (lenta — login, rate limit global, itens da nota), vincula
         // na hora uma nota PROVISÓRIA (só o número + o próprio DANFE
         // enviado) e enfileira o processo lento em background — ver
-        // invoiceService.createStub e TCarInvoiceQueue "invoice_transfer".
+        // invoiceIngestionService.createStub e TCarInvoiceQueue "invoice_transfer".
         // A filial Tecinco é a de quem EMITIU a nota de transferência, nunca
         // a loja que abriu a solicitação PDV — as duas podem ser diferentes.
         if (!found) {
@@ -2461,7 +2462,7 @@ export class PdvSalesRequestService extends BaseService<
             entity_id: stubId,
           });
 
-          found = await invoiceService.createStub({
+          found = await invoiceIngestionService.createStub({
             id: stubId,
             integrationsId: tecinco.id,
             numberSystem: number,
@@ -2513,6 +2514,11 @@ export class PdvSalesRequestService extends BaseService<
         "A nota de transferência precisa ser da integração Tecinco",
       );
     }
+    // Nota interna (série B) é entre lojas, mas não serve como nota de transferência da venda.
+    const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
+    if (internalOperationId && invoice.invoice_operation_id === internalOperationId) {
+      throw new Error("Nota interna não serve como nota de transferência da venda.");
+    }
 
     // Vale pra todo caminho (id, XML, DANFE); provisória antiga sem destinatário gravado só confere o emitente.
     await this.assertTransferBetweenStores(
@@ -2526,7 +2532,7 @@ export class PdvSalesRequestService extends BaseService<
       const saleInvoice = await invoiceService.findById(request.sale_invoice_id, {
         attributes: ["number_system"],
       });
-      await invoiceService.assertTransferReferences(
+      await transferReferenceService.assertTransferReferences(
         [
           {
             invoiceId: request.sale_invoice_id,
@@ -3047,7 +3053,7 @@ export class PdvSalesRequestService extends BaseService<
     });
   }
 
-  // Nota de venda devolvida (devolução Bling com refNFe, ver invoiceService.bondReturnInvoice) —
+  // Nota de venda devolvida (devolução Bling com refNFe, ver invoiceCancellationService.bondReturnInvoice) —
   // cancela em qualquer status, sem decisão do CD21; não é desfeito por reactivateIfCancelledByOrder.
   async cancelBySaleInvoiceReturned(
     saleInvoiceId: string,

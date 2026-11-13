@@ -43,7 +43,13 @@ import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import { endOfDayTz, startOfDayTz } from "../../../../shared/utils/normalizers/date";
-import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
+import {
+  invoiceService,
+  buildBlingEntranceInvoiceUrl,
+  internalInvoiceScopeService,
+  INTERNAL_BATCH_REFUSED_MESSAGE,
+  INTERNAL_INVOICE_REFUSED_MESSAGE,
+} from "../../fiscal/invoices/invoice";
 import invoiceItemsService from "../../fiscal/invoices/invoice-items/invoice-items.service";
 import { ensureSameBy } from "../../../../shared/utils/validators/same-not-allowed";
 import transporterService from "../../transporter/transporter.service";
@@ -93,7 +99,6 @@ import {
 } from "../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { getBlingIntegration } from "../../../handlers/bling/api/bling_api.service";
 import { FINAL_JOB_STATUSES, JobStatus, toJobStatus } from "../../../../shared/utils/queues/job-status";
-import { buildBlingEntranceInvoiceUrl } from "../../fiscal/invoices/invoice/helpers/bling-entrance-url";
 import { UNMAPPED_REASONS_NOT_RECONCILED_IN_BLING } from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.types";
 
 // Avaliação de conciliação na Bling (lote de entrada): prefixo do jobId e retenção do job concluído — a retenção é também a validade da avaliação.
@@ -481,14 +486,17 @@ export class ExpeditionBatchService extends BaseService<
     }
   }
 
+  // options.internal: só o domínio internal/ passa (lote de nota interna); nunca exposto na rota genérica.
   async generateBatchFromInvoices(
     invoiceIds: string[],
     unitBusinessId: string,
     type: string,
     mode?: string,
     blingCheckJobId?: string,
+    options: { internal?: boolean } = {},
   ): Promise<ExpeditionBatch> {
     let batchId: string;
+    const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
 
     await sequelize.transaction(async (t) => {
       const lockedInvoices = await invoiceService.findAll({
@@ -512,6 +520,17 @@ export class ExpeditionBatchService extends BaseService<
         ],
         transaction: t,
       });
+
+      // Nota interna só em lote interno (internal/) e lote interno só com nota interna: nunca misturam com NF-e.
+      const internalCount = rawInvoices.filter(
+        (invoice) => !!internalOperationId && invoice.invoice_operation_id === internalOperationId,
+      ).length;
+      if (options.internal && internalCount !== rawInvoices.length) {
+        throw new Error("Só nota interna neste lote");
+      }
+      if (!options.internal && internalCount > 0) {
+        throw new Error(INTERNAL_INVOICE_REFUSED_MESSAGE);
+      }
 
       const unitBusiness = await unitBusinessService.findOne({
         where: { id: unitBusinessId },
@@ -658,6 +677,7 @@ export class ExpeditionBatchService extends BaseService<
         type,
         mode,
         transporters_id: invoices[0].transporter_id || null,
+        is_internal: !!options.internal,
       };
 
       const { batch } = await this.createBatchStructure(
@@ -786,6 +806,7 @@ export class ExpeditionBatchService extends BaseService<
     return this.generateBatchFromInvoices(batchInvoiceIds, unitBusinessId, type, mode, blingCheckJobId);
   }
 
+// options.internal: só o domínio internal/ passa — chavesAcesso viram ids de nota interna (sem chave) e o lote é interno.
 async addInvoiceToBatch(
   chavesAcesso: string[],
   unitBusinessId: string,
@@ -794,8 +815,10 @@ async addInvoiceToBatch(
   transferInvoiceReference?: string,
   externalTransaction?: Transaction,
   blingCheckJobId?: string,
+  options: { internal?: boolean } = {},
 ): Promise<ExpeditionBatch> {
   let resultBatchId: string;
+  const internalOperationId = await internalInvoiceScopeService.getInternalOperationId();
 
   const run = async (t: Transaction) => {
     if (!Array.isArray(chavesAcesso) || !chavesAcesso.length) {
@@ -814,22 +837,37 @@ async addInvoiceToBatch(
     throw new Error("Nenhuma chave de acesso válida informada");
   }
 
+    // Nota interna não tem chave de acesso: no fluxo interno a busca é pelo id da nota.
+    const lookupField = options.internal ? "id" : "xml_key";
     const invoices = await invoiceService.findAll({
-      where: { xml_key: cleanedChaves },
+      where: { [lookupField]: cleanedChaves },
       include: [{ model: InvoiceItems, as: "items", required: false }],
       transaction: t,
     });
 
     if (!invoices.length) {
       throw new Error(
-        "Nenhuma nota encontrada para as chaves de acesso informadas",
+        options.internal
+          ? "Nenhuma nota interna encontrada"
+          : "Nenhuma nota encontrada para as chaves de acesso informadas",
       );
     }
 
     if (invoices.length !== cleanedChaves.length) {
-      const foundKeys = invoices.map((i: any) => i.xml_key);
+      const foundKeys = invoices.map((i: any) => i[lookupField]);
       const missing = cleanedChaves.filter((c) => !foundKeys.includes(c));
       throw new Error(`Nota(s) não encontrada(s): ${missing.join(", ")}`);
+    }
+
+    // Nota interna só em lote interno e lote interno só com nota interna (mesma regra do generateBatchFromInvoices).
+    const internalCount = invoices.filter(
+      (invoice) => !!internalOperationId && invoice.invoice_operation_id === internalOperationId,
+    ).length;
+    if (options.internal && internalCount !== invoices.length) {
+      throw new Error("Só nota interna neste lote");
+    }
+    if (!options.internal && internalCount > 0) {
+      throw new Error(INTERNAL_INVOICE_REFUSED_MESSAGE);
     }
 
 
@@ -955,6 +993,9 @@ async addInvoiceToBatch(
       });
       if (!found) throw new Error("Lote não encontrado");
       if (found.status === "FINISHED") throw new Error("Lote já finalizado");
+      // Lote interno só recebe nota pelo internal/ (e NF-e nunca entra nele).
+      if (found.is_internal && !options.internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
+      if (!found.is_internal && options.internal) throw new Error("Lote não é de nota interna");
 
       // Nota só entra em lote do mesmo tipo; exceção: transbordo (entrada e saída da mesma loja).
       const wrongType = plainInvoices.find(
@@ -1032,6 +1073,7 @@ async addInvoiceToBatch(
         integrations_id: firstInvoice.integrations_id,
         type,
         transporters_id: firstInvoice.transporter_id || null,
+        is_internal: !!options.internal,
       };
 
       const { batch } = await this.createBatchStructure(
@@ -1666,12 +1708,15 @@ async addInvoiceToLastOutgoingBatch(
   }
 
   // forcedWhere repassado ao BaseService (filtro store_number do controller); opcional.
+  // GET /batch: por padrão só lote de NF-e; filters[is_internal]=true lista só os lotes de nota interna.
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
     forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<ExpeditionBatch>> {
-    return super.paginate(params, {
+    const { is_internal: isInternalFilter, ...filters } = params.filters ?? {};
+    const isInternal = String(isInternalFilter) === "true";
+    return super.paginate({ ...params, filters }, {
       ...extraOptions,
       // has_transshipment: selo "Transbordo" nas listagens de lote de entrada e de expedição.
       attributes: { include: [this.repository.hasTransshipmentAttribute()] },
@@ -1685,7 +1730,7 @@ async addInvoiceToLastOutgoingBatch(
           as: "transporter",
         },
       ],
-    }, forcedWhere);
+    }, { ...forcedWhere, is_internal: isInternal });
   }
 
     async searchPendingOutgoing(
@@ -1712,16 +1757,19 @@ async addInvoiceToLastOutgoingBatch(
         ],
       },
       // Só lotes de saída: lote de entrada aberto não pode aparecer como destino de nota de saída.
-      { type: "OUTGOING", status: { [Op.in]: ["OPEN", "PENDING"] } },
+      // Lote de nota interna fica fora da busca de lotes pendentes (inclusive a do CD21).
+      { type: "OUTGOING", status: { [Op.in]: ["OPEN", "PENDING"] }, is_internal: false },
     );
   }
 
-  async finishBatch(batchId: string, justification: string, user: any) {
+  // options.internal: só o internal/ finaliza lote de nota interna; a rota atual recusa.
+  async finishBatch(batchId: string, justification: string, user: any, options: { internal?: boolean } = {}) {
     const fullBatch = await sequelize.transaction(async (t) => {
       const batch = await this.finishBatchTransaction(
         batchId,
         justification,
         t,
+        options,
       );
 
       if (batch.integration?.name == "Tecinco") {
@@ -1752,8 +1800,12 @@ async addInvoiceToLastOutgoingBatch(
     batchId: string,
     justification: string,
     t: Transaction,
+    options: { internal?: boolean } = {},
   ): Promise<ExpeditionBatchFull> {
     const fullBatch = await this.findByIdFullBatch(batchId);
+
+    if (fullBatch.is_internal && !options.internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
+    if (!fullBatch.is_internal && options.internal) throw new Error("Lote não é de nota interna");
 
     if (!fullBatch.batchInvoices?.length) {
       throw new Error("Não é possível finalizar um lote sem notas");
@@ -1846,6 +1898,9 @@ async addInvoiceToLastOutgoingBatch(
     correctionLetterJustification?: string | null,
   ) {
     const batchInfo = await this.findByIdFullBatch(batchId);
+
+    // Lote de nota interna não tem romaneio.
+    if (batchInfo.is_internal) throw new Error(INTERNAL_BATCH_REFUSED_MESSAGE);
 
     // Romaneio só de lote finalizado — vale pra rota normal e pro PDV.
     if (batchInfo.status !== "FINISHED") {
@@ -1950,6 +2005,7 @@ async addInvoiceToLastOutgoingBatch(
     return batches;
   }
 
+  // Lote de nota interna segue a mesma regra do de NF-e: só exclui vazio.
   private async assertDeletable(batchIds: string[]): Promise<void> {
     const batchInvoices = await batchInvoicesService.findAll({
       where: { expedition_batch_id: { [Op.in]: batchIds } },

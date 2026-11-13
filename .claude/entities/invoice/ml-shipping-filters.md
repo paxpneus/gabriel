@@ -1,6 +1,6 @@
 # Mercado Livre shipping-queue filters
 
-`pending_mercadolivre`, `all_today_mercadolivre`, `finished_mercado_livre`, `dispatched_mercado_livre` — each a `=true` boolean flag, mutually exclusive tabs of one screen ("o que precisa/já foi embarcado hoje pelo Mercado Livre"). 4 entries in `InvoiceService.queryConfig.customFields` (`invoice.service.ts`) — **not** the repository. All four require `$store.name$ = "MercadoLivre"`.
+`pending_mercadolivre`, `all_today_mercadolivre`, `finished_mercado_livre`, `dispatched_mercado_livre` — each a `=true` boolean flag, mutually exclusive tabs of one screen ("o que precisa/já foi embarcado hoje pelo Mercado Livre"). 4 entries in `invoiceQueryConfig.customFields` (`invoice/shared/helpers/invoice.query-config.ts`) — **not** the repository. All four require `$store.name$ = "MercadoLivre"`.
 
 ## Design history — superseded twice
 

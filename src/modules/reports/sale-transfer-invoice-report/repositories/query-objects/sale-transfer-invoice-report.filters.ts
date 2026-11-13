@@ -2,7 +2,7 @@ import { Op, WhereOptions } from "sequelize";
 import {
   invoiceOriginUnitBusinessWhere,
   invoiceProductWhere,
-} from "../../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
+} from "../../../../warehouse/fiscal/invoices/invoice";
 import { SaleTransferInvoiceReportScope } from "../../models/sale-transfer-invoice-report.types";
 import { SALE_INVOICE_ALIAS } from "./sale-transfer-invoice-report.attributes";
 

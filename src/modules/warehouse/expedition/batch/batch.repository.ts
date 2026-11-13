@@ -16,7 +16,7 @@ import InvoiceUnitBusinessAttributes from "../../fiscal/invoices/invoice-unit-bu
 import {
   totalExpectedLiteral,
   totalReadLiteral,
-} from "../../fiscal/invoices/invoice/helpers/totals";
+} from "../../fiscal/invoices/invoice";
 import { Literal } from "sequelize/lib/utils";
 import Integration from "../../../integrations/integrations/integrations.model";
 import { transporterSelectorSql } from "../../../sales/pdv-management/sales-request/helpers/transporter-cd";
@@ -224,6 +224,8 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
         unit_business_id: unitBusinessId,
         type: "OUTGOING",
         status: { [Op.in]: ["OPEN", "PENDING"] },
+        // Lote de nota interna nunca recebe nota do PDV.
+        is_internal: false,
         [Op.and]: !transporter ? [] : [
           literal(`(
             EXISTS (

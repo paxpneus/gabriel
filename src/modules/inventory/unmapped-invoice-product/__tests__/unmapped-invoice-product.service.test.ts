@@ -46,9 +46,12 @@ jest.mock("../../../handlers/tecinco/queues/tecinco-api-fetch.queue", () => ({
   TCAR_CREATE_PRODUCT_PRIORITY: 1,
 }));
 
-jest.mock("../../../warehouse/fiscal/invoices/invoice/invoice.service", () => ({
+jest.mock("../../../warehouse/fiscal/invoices/invoice", () => ({
   __esModule: true,
-  default: { addMissingInvoiceItems: jest.fn(), findById: jest.fn() },
+  // Helpers puros da fachada seguem reais; só os services são mockados.
+  ...jest.requireActual("../../../warehouse/fiscal/invoices/invoice/shared/helpers/bling-entrance-url"),
+  invoiceCreationService: { addMissingInvoiceItems: jest.fn() },
+  invoiceService: { findById: jest.fn() },
 }));
 
 jest.mock("../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service", () => ({
@@ -64,7 +67,7 @@ jest.mock("../../../sales/pdv-management/sales-request/pdv-sales-request.service
 import { Op } from "sequelize";
 import UnmappedInvoiceProduct from "../unmapped-invoice-product.model";
 import integrationsService from "../../../integrations/integrations/integrations.service";
-import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceCreationService, invoiceService } from "../../../warehouse/fiscal/invoices/invoice";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import pdvSalesRequestService from "../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { resolveTecincoBranchId } from "../../../../shared/utils/tecinco/resolve-branch-id";
@@ -108,7 +111,7 @@ describe("UnmappedInvoiceProductService", () => {
           }),
         }),
       );
-      expect(invoiceService.addMissingInvoiceItems).not.toHaveBeenCalled();
+      expect(invoiceCreationService.addMissingInvoiceItems).not.toHaveBeenCalled();
       expect(deleteSpy).toHaveBeenCalledWith("unmapped-catalog-id");
     });
 
@@ -126,7 +129,7 @@ describe("UnmappedInvoiceProductService", () => {
         productId: "product-2",
       });
 
-      expect(invoiceService.addMissingInvoiceItems).toHaveBeenCalledWith(
+      expect(invoiceCreationService.addMissingInvoiceItems).toHaveBeenCalledWith(
         "invoice-1",
         [{ product_id: "product-2", quantity_expected: 3 }],
       );
@@ -151,7 +154,7 @@ describe("UnmappedInvoiceProductService", () => {
           productId: "product-1",
         }),
       ).resolves.toBeUndefined();
-      expect(invoiceService.addMissingInvoiceItems).not.toHaveBeenCalled();
+      expect(invoiceCreationService.addMissingInvoiceItems).not.toHaveBeenCalled();
     });
 
     it("excludeIds: exclui a linha do fechamento simples (quem chamou vai tratá-la por fora, ver createProductAndMapToInvoice)", async () => {

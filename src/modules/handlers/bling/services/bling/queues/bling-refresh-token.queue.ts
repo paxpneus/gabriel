@@ -4,7 +4,7 @@ import { BaseQueueService } from "../../../../../../shared/utils/base-models/bas
 import { doRefreshToken } from "../../../api/bling_api.service";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { Invoice } from "../../../../../warehouse";
-import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { invoiceLifecycleService } from "../../../../../warehouse/fiscal/invoices/invoice";
 
 export class BlingTokenRefreshQueue extends BaseQueueService<void> {
   constructor(options: { workless?: boolean } = {}) {
@@ -61,7 +61,7 @@ export class BlingTokenRefreshQueue extends BaseQueueService<void> {
       });
 
       if (invoices.length > 0) {
-        await invoiceService.updateInvoicesForAllUnitBusiness(
+        await invoiceLifecycleService.updateInvoicesForAllUnitBusiness(
           invoices.map((i) => i.id),
           { status: "LATE" },
           { type: "INCOMING" }, 
