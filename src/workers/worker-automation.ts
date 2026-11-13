@@ -8,7 +8,8 @@ async function start(): Promise<void> {
   await sequelize.authenticate();
   console.log("------------------- DB: Banco Conectado! -------------------");
   setupAssociations();
-  startAutomationWorkers();
+  // DESATIVADO (kill switch Bling): sem isso nenhuma fila de automação consome/agenda, logo nada escreve na Bling.
+  // startAutomationWorkers();
   startHealthServer();
 }
 

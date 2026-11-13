@@ -28,28 +28,31 @@ export class NfeEmissionService {
       );
     }
 
-    try {
-      await blingPost(
-        `/pedidos/vendas/${order.id_order_system}/gerar-nfe`,
-        undefined,
-        blingApi,
-        { timeout: 45_000 },
-      );
-    } catch (error: any) {
-      const fields = error.response?.data?.error?.fields ?? [];
-      const noStock = fields.some((f: any) => f.code === 74);
-      throw new Error(
-        noStock
-          ? "Item(s) sem estoque disponível na Bling"
-          : (error.response?.data?.error?.message ??
-              "Falha ao gerar NFe na Bling"),
-      );
-    }
+    // DESATIVADO (kill switch Bling): sem a chamada à Bling não pode marcar a nota como emitida, então falha explícito.
+    throw new Error("Emissão de NFe na Bling desativada temporariamente");
 
-    await ordersService.update(order.id, {
-      nfe_emitted: true,
-      internal_status: OrderInternalStatus.EMITTED,
-    });
+    // try {
+    //   await blingPost(
+    //     `/pedidos/vendas/${order.id_order_system}/gerar-nfe`,
+    //     undefined,
+    //     blingApi,
+    //     { timeout: 45_000 },
+    //   );
+    // } catch (error: any) {
+    //   const fields = error.response?.data?.error?.fields ?? [];
+    //   const noStock = fields.some((f: any) => f.code === 74);
+    //   throw new Error(
+    //     noStock
+    //       ? "Item(s) sem estoque disponível na Bling"
+    //       : (error.response?.data?.error?.message ??
+    //           "Falha ao gerar NFe na Bling"),
+    //   );
+    // }
+
+    // await ordersService.update(order.id, {
+    //   nfe_emitted: true,
+    //   internal_status: OrderInternalStatus.EMITTED,
+    // });
   }
 }
 

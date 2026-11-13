@@ -661,12 +661,13 @@ export function startScrapingWorker() {
     { workless: false },
   );
 
-  const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
-    new BlingManifestacaoService(),
-    { workless: false },
-  );
-
-  blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 60 * 1000 });
+  // DESATIVADO (kill switch Bling): a manifestação de NFe escreve na Bling via UI (Playwright), sem passar pelo blingApi.
+  // const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
+  //   new BlingManifestacaoService(),
+  //   { workless: false },
+  // );
+  //
+  // blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 60 * 1000 });
   blingStockMovementsScrapingQueue.scheduleRepeat({
     cron: "0 5 * * *",
     tz: "America/Sao_Paulo",
@@ -674,7 +675,7 @@ export function startScrapingWorker() {
   });
 
   void mlScrapingQueue;
-  void blingNfeScrapingQueue;
+  // void blingNfeScrapingQueue;
   void blingStockMovementsScrapingQueue;
 
   console.log(
