@@ -378,6 +378,14 @@ describe("InternalInvoiceService — lote da nota interna", () => {
     ]);
   });
 
+  it("scan ordena as linhas das notas por createdAt e id (notas adicionadas juntas têm o mesmo createdAt)", async () => {
+    arrangeOutgoingBatch();
+
+    await internalInvoiceService.scanInternalBatchProduct({ productCode: "789", batchId: "batch-1", quantity: 1, userId: "u-1", type: "OUTGOING" });
+
+    expect(findInvoiceItems.mock.calls[0][0].order).toEqual([["createdAt", "ASC"], ["id", "ASC"]]);
+  });
+
   it("scan de saída acima do restante é recusado sem gravar", async () => {
     arrangeOutgoingBatch();
 

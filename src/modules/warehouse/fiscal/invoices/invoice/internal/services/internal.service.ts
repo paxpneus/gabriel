@@ -270,7 +270,8 @@ export class InternalInvoiceService extends BaseService<Invoice, InternalInvoice
       // Uma linha por nota do lote com esse produto, na ordem de entrada no lote.
       const invoiceItems = await batchInvoiceItemsService.findAll({
         where: { expedition_batch_item_id: batchItem.id },
-        order: [["createdAt", "ASC"]],
+        // id como desempate: notas adicionadas na mesma chamada têm o mesmo createdAt e a ordem ficaria indefinida.
+        order: [["createdAt", "ASC"], ["id", "ASC"]],
         transaction: t,
         lock: t.LOCK.UPDATE,
       });

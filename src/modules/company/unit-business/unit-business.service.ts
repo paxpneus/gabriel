@@ -311,6 +311,8 @@ export class UnitBusinessService extends BaseService<
         unit_business_id: unitBusinessId,
         type: "OUTGOING",
         status: { [Op.ne]: "FINISHED" },
+        // Lote de nota interna não é o "último lote de saída" do fluxo de NF-e.
+        is_internal: false,
       },
       order: [["createdAt", "DESC"]],
       attributes: ["id", "number"],
